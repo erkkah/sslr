@@ -1,0 +1,15 @@
+version: '3'
+services:
+  mydb:
+    image: postgres
+    volumes:
+      - sslr-db:/var/lib/postgresql/data
+      - ./docker-init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - 2345:5432
+    environment:
+      POSTGRES_PASSWORD: super-secret
+ 
+volumes:
+  sslr-db:
+    driver: local

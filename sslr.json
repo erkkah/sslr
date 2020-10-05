@@ -1,0 +1,7 @@
+{
+    "source": "postgres://system:password@localhost/babyshop?default_transaction_read_only=true",
+    "target": "postgres://postgres:super-secret@localhost:2345/sslr",
+    "tables": [
+        "products.display_product"
+    ]
+}

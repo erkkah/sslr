@@ -27,6 +27,7 @@ func NewJob(config Config) (*Job, error) {
 
 // Run runs a single SSLR sync job
 func (job *Job) Run() error {
+	logger.Info.Printf("Starting job with throttle at %.2f%%", job.cfg.ThrottlePercentage)
 
 	logger.Info.Printf("Connecting")
 	err := job.connect()
@@ -126,7 +127,7 @@ func (job *Job) updateTables() error {
 			return fmt.Errorf("failed to get update range: %w", err)
 		}
 
-		err = updateTable(job.source, job.target, table, updateRange, job.cfg.UpdateChunkSize)
+		err = updateTable(job.source, job.target, table, updateRange, job.cfg)
 		if err != nil {
 			return err
 		}

@@ -25,10 +25,12 @@ func getUpdateRange(conn *pgx.Conn, table string, lastSeenXmin uint64) (updateRa
 	return resultRange, nil
 }
 
-func updateTable(source *pgx.Conn, target *pgx.Conn, table string, updRange updateRange, chunkSize uint32) error {
+func updateTable(source *pgx.Conn, target *pgx.Conn, table string, updRange updateRange, cfg Config) error {
+	throttle := newThrottle(cfg.ThrottlePercentage)
 	start := updRange.startXmin
 	for start <= updRange.endXmin {
 		logger.Debug.Printf("Updating table %s from %v", table, start)
+		throttle.start()
 		q := fmt.Sprintf(`--sql 
 		select
 			xmin, *
@@ -41,7 +43,7 @@ func updateTable(source *pgx.Conn, target *pgx.Conn, table string, updRange upda
 		limit
 			$2
 		;`, table)
-		rows, err := source.Query(context.Background(), q, start, chunkSize)
+		rows, err := source.Query(context.Background(), q, start, cfg.UpdateChunkSize)
 		if err != nil {
 			return fmt.Errorf("query execution failure: %w", err)
 		}
@@ -67,6 +69,8 @@ func updateTable(source *pgx.Conn, target *pgx.Conn, table string, updRange upda
 			lastUpdatedXmin = uint64(values[0].(uint32))
 			rowValues = append(rowValues, values[1:])
 		}
+		throttle.end()
+		throttle.wait()
 		err = applyUpdates(target, table, columnNames, rowValues)
 		if err != nil {
 			return fmt.Errorf("failed to apply updates: %w", err)

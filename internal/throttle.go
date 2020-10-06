@@ -35,10 +35,10 @@ func (t *throttledOperation) wait() {
 	totalDuration := time.Since(t.startTime)
 	utilizationLimit := float64(totalDuration.Milliseconds()) * t.level
 	utilization := float64(t.totalJobDuration.Milliseconds())
-	logger.Debug.Printf("Utilization %.2f%% of throttle value", utilization/utilizationLimit)
+	logger.Debug.Printf("Utilization %.2f%%", 100*t.level*utilization/utilizationLimit)
 	if utilization > utilizationLimit {
 		waitTime := time.Duration(2*(utilization-utilizationLimit)) * time.Millisecond
-		logger.Info.Printf("Waiting %v to keep utilization at %.2f%%", waitTime, t.level*100)
+		logger.Debug.Printf("Waiting %v to keep utilization at %.2f%%", waitTime, t.level*100)
 		time.Sleep(waitTime)
 	}
 }

@@ -10,7 +10,7 @@ type Config struct {
 	SourceConnection   string   `json:"source"`
 	TargetConnection   string   `json:"target"`
 	SourceTables       []string `json:"tables"`
-	UpdateChunkSize    uint32   `json:"updateChunkSize"`
+	UpdateChunkSize    uint32   `json:"chunkSize"`
 	ThrottlePercentage float64  `json:"throttlePercentage"`
 }
 

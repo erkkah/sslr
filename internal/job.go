@@ -3,9 +3,12 @@ package sslr
 import (
 	"context"
 	"fmt"
+	"math"
+	"time"
 
 	"github.com/erkkah/letarette/pkg/logger"
 	"github.com/jackc/pgx/v4"
+	"github.com/lib/pq"
 )
 
 // Job is my friend
@@ -14,6 +17,8 @@ type Job struct {
 	primaryKeys map[string][]string
 	source      *pgx.Conn
 	target      *pgx.Conn
+	start       time.Time
+	updatedRows uint32
 }
 
 // NewJob creates a new job
@@ -28,6 +33,7 @@ func NewJob(config Config) (*Job, error) {
 // Run runs a single SSLR sync job
 func (job *Job) Run() error {
 	logger.Info.Printf("Starting job with throttle at %.2f%%", job.cfg.ThrottlePercentage)
+	job.start = time.Now()
 
 	logger.Info.Printf("Connecting")
 	err := job.connect()
@@ -48,10 +54,13 @@ func (job *Job) Run() error {
 	}
 
 	logger.Info.Printf("Done")
+	logger.Info.Printf("%v rows updated in %v", job.updatedRows, time.Since(job.start))
 	return nil
 }
 
 func (job *Job) connect() error {
+	pq.EnableInfinityTs(time.Unix(0, 0), time.Unix(math.MaxInt32*100, 0))
+
 	var err error
 	job.source, err = pgx.Connect(context.Background(), job.cfg.SourceConnection)
 	if err != nil {
@@ -115,19 +124,15 @@ func (job *Job) validateTables() error {
 
 func (job *Job) updateTables() error {
 	for _, table := range job.cfg.SourceTables {
-		logger.Info.Printf("Updating table %s", table)
-
-		state, err := getTableState(job.target, table)
-		if err != nil {
-			return err
-		}
-
-		updateRange, err := getUpdateRange(job.source, table, state.lastSeenXmin)
+		updateRange, err := job.getUpdateRange(table)
 		if err != nil {
 			return fmt.Errorf("failed to get update range: %w", err)
 		}
-
-		err = updateTable(job.source, job.target, table, updateRange, job.cfg)
+		if updateRange.empty() {
+			continue
+		}
+		logger.Info.Printf("Updating table %s", table)
+		err = job.updateTable(table, updateRange)
 		if err != nil {
 			return err
 		}

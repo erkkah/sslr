@@ -2,9 +2,9 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
 
+	"github.com/erkkah/letarette/pkg/logger"
 	sslr "github.com/erkkah/sslr/internal"
 )
 
@@ -18,19 +18,19 @@ func main() {
 
 	config, err := sslr.LoadConfig(args.configFile)
 	if err != nil {
-		fmt.Printf("Failed to load config: %v\n", err)
+		logger.Error.Printf("Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 
 	job, err := sslr.NewJob(config)
 	if err != nil {
-		fmt.Printf("Failed to create job: %v\n", err)
+		logger.Error.Printf("Failed to create job: %v\n", err)
 		os.Exit(2)
 	}
 
 	err = job.Run()
 	if err != nil {
-		fmt.Printf("SSLR job failed: %v\n", err)
+		logger.Error.Printf("SSLR job failed: %v\n", err)
 		os.Exit(3)
 	}
 

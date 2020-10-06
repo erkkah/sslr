@@ -10,6 +10,7 @@ type Config struct {
 	SourceConnection string   `json:"source"`
 	TargetConnection string   `json:"target"`
 	SourceTables     []string `json:"tables"`
+	UpdateChunkSize  uint32   `json:"updateChunkSize"`
 }
 
 // LoadConfig reads a JSON - formatted config file into a Config
@@ -20,5 +21,8 @@ func LoadConfig(fileName string) (Config, error) {
 		return config, err
 	}
 	err = json.Unmarshal(jsonData, &config)
+	if config.UpdateChunkSize == 0 {
+		config.UpdateChunkSize = 1000
+	}
 	return config, err
 }

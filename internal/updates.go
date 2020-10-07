@@ -47,7 +47,6 @@ func (job *Job) updateTable(table string, primaryKey string, updRange updateRang
 	offset := 0
 
 	for xmin <= updRange.endXmin {
-		logger.Debug.Printf("Updating from %v:%v", xmin, offset)
 		throttle.start()
 		q := fmt.Sprintf(`--sql 
 		select

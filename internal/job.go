@@ -35,6 +35,8 @@ func NewJob(config Config) (*Job, error) {
 // Run runs a single SSLR sync job
 func (job *Job) Run() error {
 	logger.Info.Printf("Starting job with throttle at %.2f%%", job.cfg.ThrottlePercentage)
+	logger.Info.Printf("Changes are synced in chunks of %v", job.cfg.UpdateChunkSize)
+	logger.Info.Printf("Deletions are synced in chunks of %v", job.cfg.DeleteChunkSize)
 	job.start = time.Now()
 
 	logger.Info.Printf("Connecting")

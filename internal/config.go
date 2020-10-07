@@ -14,6 +14,7 @@ type Config struct {
 	DeleteChunkSize    uint32   `json:"deleteChunkSize"`
 	MinDeleteChunkSize uint32   `json:"minDeleteChunkSize"`
 	ThrottlePercentage float64  `json:"throttlePercentage"`
+	StateTableName     string   `json:"stateTable"`
 }
 
 // LoadConfig reads a JSON - formatted config file into a Config
@@ -24,6 +25,7 @@ func LoadConfig(fileName string) (Config, error) {
 		ThrottlePercentage: 80,
 		DeleteChunkSize:    1000,
 		MinDeleteChunkSize: 100,
+		StateTableName:     "__sslr_state",
 	}
 	jsonData, err := ioutil.ReadFile(fileName)
 	if err != nil {

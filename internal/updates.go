@@ -25,7 +25,7 @@ func (u updateRange) empty() bool {
 func (job *Job) getUpdateRange(table string) (updateRange, error) {
 	var resultRange updateRange
 
-	state, err := getTableState(job.target, table)
+	state, err := job.getTableState(table)
 	if err != nil {
 		return resultRange, err
 	}
@@ -114,7 +114,7 @@ func (job *Job) updateTable(table string, primaryKey string, updRange updateRang
 		}
 
 		if lastCompleteXmin != 0 {
-			err = setTableState(job.target, table, tableState{lastCompleteXmin})
+			err = job.setTableState(table, tableState{lastCompleteXmin})
 			if err != nil {
 				return err
 			}

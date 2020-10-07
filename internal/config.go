@@ -10,7 +10,9 @@ type Config struct {
 	SourceConnection   string   `json:"source"`
 	TargetConnection   string   `json:"target"`
 	SourceTables       []string `json:"tables"`
-	UpdateChunkSize    uint32   `json:"chunkSize"`
+	UpdateChunkSize    uint32   `json:"updateChunkSize"`
+	DeleteChunkSize    uint32   `json:"deleteChunkSize"`
+	MinDeleteChunkSize uint32   `json:"minDeleteChunkSize"`
 	ThrottlePercentage float64  `json:"throttlePercentage"`
 }
 
@@ -20,14 +22,13 @@ func LoadConfig(fileName string) (Config, error) {
 	config := Config{
 		UpdateChunkSize:    1000,
 		ThrottlePercentage: 80,
+		DeleteChunkSize:    1000,
+		MinDeleteChunkSize: 100,
 	}
 	jsonData, err := ioutil.ReadFile(fileName)
 	if err != nil {
 		return config, err
 	}
 	err = json.Unmarshal(jsonData, &config)
-	if config.UpdateChunkSize == 0 {
-		config.UpdateChunkSize = 1000
-	}
 	return config, err
 }

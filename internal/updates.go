@@ -40,7 +40,7 @@ func (job *Job) getUpdateRange(table string) (updateRange, error) {
 	return resultRange, nil
 }
 
-func (job *Job) updateTable(table string, updRange updateRange) error {
+func (job *Job) updateTable(table string, primaryKey string, updRange updateRange) error {
 	logger.Info.Printf("Updating table %s from %v to %v", table, updRange.startXmin, updRange.endXmin)
 	throttle := newThrottle(job.cfg.ThrottlePercentage)
 	xmin := updRange.startXmin
@@ -53,16 +53,17 @@ func (job *Job) updateTable(table string, updRange updateRange) error {
 		select
 			xmin, *
 		from
-			%s
+			%[1]s
 		where
 			xmin::text::bigint >= $1
 		order by
-			xmin::text::bigint asc
+			xmin::text::bigint asc,
+			%[2]s
 		offset
 			$2
 		limit
 			$3
-		;`, table)
+		;`, table, primaryKey)
 		rows, err := job.source.Query(context.Background(), q, xmin, offset, job.cfg.UpdateChunkSize)
 		if err != nil {
 			return fmt.Errorf("query execution failure: %w", err)

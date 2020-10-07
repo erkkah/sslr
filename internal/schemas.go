@@ -146,7 +146,12 @@ func createTable(conn *pgx.Conn, table string, schema string) error {
 func applyIndices(conn *pgx.Conn, table string, indices []tableIndex) error {
 	for _, index := range indices {
 		columns := strings.Join(index.columns, ",")
-		_, err := conn.Exec(context.Background(), fmt.Sprintf("create index concurrently if not exists %s on %s (%s)", index.indexName, table, columns))
+		var directive string
+		if index.primary {
+			directive = "unique"
+		}
+		q := fmt.Sprintf("create %s index concurrently if not exists %s on %s (%s)", directive, index.indexName, table, columns)
+		_, err := conn.Exec(context.Background(), q)
 		if err != nil {
 			return fmt.Errorf("failed to create index: %w", err)
 		}

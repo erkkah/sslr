@@ -22,7 +22,7 @@ func (u updateRange) empty() bool {
 	return u.startXmin > u.endXmin
 }
 
-func (job *Job) getUpdateRange(table string) (updateRange, error) {
+func (job *Job) getUpdateRange(table string, where string) (updateRange, error) {
 	var resultRange updateRange
 
 	state, err := job.getTableState(table)
@@ -31,7 +31,12 @@ func (job *Job) getUpdateRange(table string) (updateRange, error) {
 	}
 	resultRange.startXmin = state.lastSeenXmin + 1
 
-	row := job.source.QueryRow(context.Background(), fmt.Sprintf("select max(xmin::text::bigint) from %s", table))
+	var whereClause string
+	if len(where) > 0 {
+		whereClause = "where " + where
+	}
+	q := fmt.Sprintf("select max(xmin::text::bigint) from %s %s", table, whereClause)
+	row := job.source.QueryRow(context.Background(), q)
 	err = row.Scan(&resultRange.endXmin)
 	if err != nil {
 		return resultRange, err
@@ -40,11 +45,16 @@ func (job *Job) getUpdateRange(table string) (updateRange, error) {
 	return resultRange, nil
 }
 
-func (job *Job) updateTable(table string, primaryKey string, updRange updateRange) error {
+func (job *Job) updateTableRange(table string, primaryKey string, updRange updateRange, where string) error {
 	logger.Info.Printf("Updating table %s from %v to %v", table, updRange.startXmin, updRange.endXmin)
 	throttle := newThrottle(job.cfg.ThrottlePercentage)
 	xmin := updRange.startXmin
 	offset := 0
+
+	var whereClause string
+	if len(where) > 0 {
+		whereClause = "and " + where
+	}
 
 	for xmin <= updRange.endXmin {
 		throttle.start()
@@ -55,6 +65,7 @@ func (job *Job) updateTable(table string, primaryKey string, updRange updateRang
 			%[1]s
 		where
 			xmin::text::bigint >= $1
+			%[3]s
 		order by
 			xmin::text::bigint asc,
 			%[2]s
@@ -62,7 +73,7 @@ func (job *Job) updateTable(table string, primaryKey string, updRange updateRang
 			$2
 		limit
 			$3
-		;`, table, primaryKey)
+		;`, table, primaryKey, whereClause)
 		rows, err := job.source.Query(context.Background(), q, xmin, offset, job.cfg.UpdateChunkSize)
 		if err != nil {
 			return fmt.Errorf("query execution failure: %w", err)

@@ -7,14 +7,17 @@ import (
 
 // Config is the main configuration for SSLR
 type Config struct {
-	SourceConnection   string   `json:"source"`
-	TargetConnection   string   `json:"target"`
-	SourceTables       []string `json:"tables"`
-	UpdateChunkSize    uint32   `json:"updateChunkSize"`
-	DeleteChunkSize    uint32   `json:"deleteChunkSize"`
-	MinDeleteChunkSize uint32   `json:"minDeleteChunkSize"`
-	ThrottlePercentage float64  `json:"throttlePercentage"`
-	StateTableName     string   `json:"stateTable"`
+	SourceConnection     string   `json:"source"`
+	TargetConnection     string   `json:"target"`
+	SourceTables         []string `json:"tables"`
+	FilteredSourceTables map[string]struct {
+		Where string `json:"where"`
+	} `json:"filteredTables"`
+	UpdateChunkSize    uint32  `json:"updateChunkSize"`
+	DeleteChunkSize    uint32  `json:"deleteChunkSize"`
+	MinDeleteChunkSize uint32  `json:"minDeleteChunkSize"`
+	ThrottlePercentage float64 `json:"throttlePercentage"`
+	StateTableName     string  `json:"stateTable"`
 }
 
 // LoadConfig reads a JSON - formatted config file into a Config

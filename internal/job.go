@@ -137,27 +137,43 @@ func (job *Job) getPrimaryKey(table string) (string, error) {
 func (job *Job) updateTables() error {
 
 	for _, table := range job.cfg.SourceTables {
-		primaryKey, err := job.getPrimaryKey(table)
+		err := job.updateTable(table, "")
 		if err != nil {
 			return err
 		}
-		updateRange, err := job.getUpdateRange(table)
-		if err != nil {
-			return fmt.Errorf("failed to get update range: %w", err)
-		}
-		if !updateRange.empty() {
-			logger.Info.Printf("Updating table %s", table)
-			err = job.updateTable(table, primaryKey, updateRange)
-			if err != nil {
-				return err
-			}
-		}
+	}
 
-		logger.Info.Printf("Syncing deletions for table %s", table)
-		err = job.syncDeletedRows(table)
+	for table, filter := range job.cfg.FilteredSourceTables {
+		err := job.updateTable(table, filter.Where)
 		if err != nil {
-			logger.Error.Printf("Failed to sync deletions for table %s: %v", table, err)
+			return err
 		}
+	}
+
+	return nil
+}
+
+func (job *Job) updateTable(table string, where string) error {
+	primaryKey, err := job.getPrimaryKey(table)
+	if err != nil {
+		return err
+	}
+	updateRange, err := job.getUpdateRange(table, where)
+	if err != nil {
+		return fmt.Errorf("failed to get update range: %w", err)
+	}
+	if !updateRange.empty() {
+		logger.Info.Printf("Updating table %s", table)
+		err = job.updateTableRange(table, primaryKey, updateRange, where)
+		if err != nil {
+			return err
+		}
+	}
+
+	logger.Info.Printf("Syncing deletions for table %s", table)
+	err = job.syncDeletedRows(table, where)
+	if err != nil {
+		logger.Error.Printf("Failed to sync deletions for table %s: %v", table, err)
 	}
 
 	return nil

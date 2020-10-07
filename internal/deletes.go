@@ -9,13 +9,13 @@ import (
 	"github.com/jackc/pgx/v4"
 )
 
-func (job *Job) syncDeletedRows(table string) error {
+func (job *Job) syncDeletedRows(table string, where string) error {
 	primaryKey, err := job.getPrimaryKey(table)
 	if err != nil {
 		return err
 	}
 
-	keyRange, err := getPrimaryKeyRange(job.source, table, primaryKey)
+	keyRange, err := getPrimaryKeyRange(job.source, table, primaryKey, where)
 	if err != nil {
 		return fmt.Errorf("failed to get primary key range: %w", err)
 	}
@@ -26,7 +26,7 @@ func (job *Job) syncDeletedRows(table string) error {
 
 	for ; startKey < keyRange.max; startKey += chunkSize {
 		throttle.start()
-		job.syncDeletedRowRange(table, primaryKey, startKey, startKey+chunkSize)
+		job.syncDeletedRowRange(table, primaryKey, startKey, startKey+chunkSize, where)
 		throttle.end()
 		throttle.wait()
 	}
@@ -34,12 +34,12 @@ func (job *Job) syncDeletedRows(table string) error {
 	return nil
 }
 
-func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey uint32, endKey uint32) error {
-	sourceHash, err := getKeyHash(job.source, table, primaryKey, startKey, endKey)
+func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey uint32, endKey uint32, where string) error {
+	sourceHash, err := getKeyHash(job.source, table, primaryKey, startKey, endKey, where)
 	if err != nil {
 		return err
 	}
-	targetHash, err := getKeyHash(job.target, table, primaryKey, startKey, endKey)
+	targetHash, err := getKeyHash(job.target, table, primaryKey, startKey, endKey, where)
 	if err != nil {
 		return err
 	}
@@ -47,17 +47,17 @@ func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey ui
 		chunkSize := endKey - startKey
 		if chunkSize <= job.cfg.MinDeleteChunkSize {
 			logger.Debug.Printf("Updating (%v - %v)", startKey, endKey)
-			err = job.updateChangedRange(table, primaryKey, startKey, endKey)
+			err = job.updateChangedRange(table, primaryKey, startKey, endKey, where)
 			if err != nil {
 				return err
 			}
 		} else {
 			nextChunkSize := chunkSize / 2
-			err = job.syncDeletedRowRange(table, primaryKey, startKey, startKey+nextChunkSize)
+			err = job.syncDeletedRowRange(table, primaryKey, startKey, startKey+nextChunkSize, where)
 			if err != nil {
 				return err
 			}
-			err = job.syncDeletedRowRange(table, primaryKey, startKey+nextChunkSize, endKey)
+			err = job.syncDeletedRowRange(table, primaryKey, startKey+nextChunkSize, endKey, where)
 			if err != nil {
 				return err
 			}
@@ -66,7 +66,7 @@ func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey ui
 	return nil
 }
 
-func (job *Job) updateChangedRange(table string, primaryKey string, startKey uint32, endKey uint32) error {
+func (job *Job) updateChangedRange(table string, primaryKey string, startKey uint32, endKey uint32, where string) error {
 	ctx := context.Background()
 	tx, err := job.target.Begin(ctx)
 	if err != nil {
@@ -78,6 +78,11 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey uin
 		}
 	}()
 
+	var whereClause string
+	if len(where) > 0 {
+		whereClause = "and " + where
+	}
+
 	q := fmt.Sprintf(`--sql
 	select
 		*
@@ -85,9 +90,10 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey uin
 		%[1]s
 	where
 		%[2]s >= $1
-	and
+		and
 		%[2]s <= $2
-	;`, table, primaryKey)
+		%[3]s
+	;`, table, primaryKey, whereClause)
 
 	rows, err := job.source.Query(ctx, q, startKey, endKey)
 	if err != nil {
@@ -138,7 +144,11 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey uin
 	return nil
 }
 
-func getKeyHash(conn *pgx.Conn, table string, primaryKey string, startKey, endKey uint32) (string, error) {
+func getKeyHash(conn *pgx.Conn, table string, primaryKey string, startKey, endKey uint32, where string) (string, error) {
+	var whereClause string
+	if len(where) > 0 {
+		whereClause = "and " + where
+	}
 	q := `--sql 
 	select
 		md5(array_agg(id)::varchar) as hash
@@ -151,11 +161,12 @@ func getKeyHash(conn *pgx.Conn, table string, primaryKey string, startKey, endKe
 			%[1]s >= $1
 			and
 			%[1]s < $2
+			%[3]s
 		order by
 			1
 	) as t
 	;`
-	row := conn.QueryRow(context.Background(), fmt.Sprintf(q, primaryKey, table), startKey, endKey)
+	row := conn.QueryRow(context.Background(), fmt.Sprintf(q, primaryKey, table, whereClause), startKey, endKey)
 	var hash string
 	err := row.Scan(&hash)
 	if err != nil {
@@ -178,12 +189,17 @@ type primaryKeyRange struct {
 	count uint32
 }
 
-func getPrimaryKeyRange(conn *pgx.Conn, table string, primaryKey string) (primaryKeyRange, error) {
+func getPrimaryKeyRange(conn *pgx.Conn, table string, primaryKey string, where string) (primaryKeyRange, error) {
+	var whereClause string
+	if len(where) > 0 {
+		whereClause = "where " + where
+	}
 	q := `--sql
 		select min(%[1]s), max(%[1]s), count(*)
 		from %[2]s
+		%[3]s
 	;`
-	row := conn.QueryRow(context.Background(), fmt.Sprintf(q, primaryKey, table))
+	row := conn.QueryRow(context.Background(), fmt.Sprintf(q, primaryKey, table, whereClause))
 	var result primaryKeyRange
 	err := row.Scan(&result.min, &result.max, &result.count)
 	if err != nil {

@@ -5,7 +5,7 @@ import (
 	"io/ioutil"
 )
 
-// Config is the core main configuration for SSLR
+// Config is the main configuration for SSLR
 type Config struct {
 	SourceConnection   string   `json:"source"`
 	TargetConnection   string   `json:"target"`

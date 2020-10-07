@@ -15,6 +15,7 @@ import (
 type Job struct {
 	cfg         Config
 	primaryKeys map[string][]string
+	columns     map[string][]string
 	source      *pgx.Conn
 	target      *pgx.Conn
 	start       time.Time
@@ -26,6 +27,7 @@ func NewJob(config Config) (*Job, error) {
 	job := Job{
 		cfg:         config,
 		primaryKeys: make(map[string][]string),
+		columns:     make(map[string][]string),
 	}
 	return &job, nil
 }

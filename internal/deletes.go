@@ -3,6 +3,7 @@ package sslr
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/erkkah/letarette/pkg/logger"
 	"github.com/jackc/pgx/v4"
@@ -45,7 +46,11 @@ func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey ui
 	if sourceHash != targetHash {
 		chunkSize := endKey - startKey
 		if chunkSize <= job.cfg.MinDeleteChunkSize {
-			logger.Debug.Printf("Deleting (%v - %v)", startKey, endKey)
+			logger.Debug.Printf("Updating (%v - %v)", startKey, endKey)
+			err = job.updateChangedRange(table, primaryKey, startKey, endKey)
+			if err != nil {
+				return err
+			}
 		} else {
 			nextChunkSize := chunkSize / 2
 			err = job.syncDeletedRowRange(table, primaryKey, startKey, startKey+nextChunkSize)
@@ -58,6 +63,78 @@ func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey ui
 			}
 		}
 	}
+	return nil
+}
+
+func (job *Job) updateChangedRange(table string, primaryKey string, startKey uint32, endKey uint32) error {
+	ctx := context.Background()
+	tx, err := job.target.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if tx != nil {
+			tx.Rollback(ctx)
+		}
+	}()
+
+	q := fmt.Sprintf(`--sql
+	select
+		*
+	from
+		%[1]s
+	where
+		%[2]s >= $1
+	and
+		%[2]s <= $2
+	;`, table, primaryKey)
+
+	rows, err := job.source.Query(ctx, q, startKey, endKey)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	rowErr := rows.Err()
+	if rowErr == pgx.ErrNoRows {
+		return nil
+	}
+	if rowErr != nil {
+		return rowErr
+	}
+
+	var columnNames []string
+	columns := rows.FieldDescriptions()
+	for _, column := range columns[1:] {
+		columnNames = append(columnNames, string(column.Name))
+	}
+
+	d := fmt.Sprintf(`--sql 
+	delete from %[1]s
+	where
+	where
+		%[2]s >= $1
+	and
+		%[2]s <= $2
+	;`, table, primaryKey)
+
+	_, err = tx.Exec(ctx, d, startKey, endKey)
+	if err != nil {
+		return err
+	}
+
+	identifier := strings.Split(table, ".")
+	updatedRows, err := tx.CopyFrom(ctx, identifier, columnNames, rows)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		return err
+	}
+	job.updatedRows += uint32(updatedRows)
+	tx = nil
 	return nil
 }
 

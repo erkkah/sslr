@@ -4,7 +4,7 @@
 
 With so many existing solutions for replicating PostgreSQL databases, why did I create SSLR?
 
-Well, maybe you are like me:
+Well, maybe you are in a situation like mine:
 
 - you need to keep a read replica updated, but don't have the possibility to set up a _real_ replica
 - you want to replicate a subset of tables from a database
@@ -52,7 +52,7 @@ $ sslr
 
 SSLR is meant to be run regularly to poll the source database and update the target database. All operations are performed in chunks, and can be throttled to limit the load of the source database.
 
-In many cases, the basic config described above works just fine. Depending on the source data structure, table size and optional filtering, you might need to tweak a couple of options to increase performance.
+In many cases, the basic configuration described above works just fine. Depending on the source data structure, table size and optional filtering, you might need to tweak a couple of options to increase performance.
 
 ### Chunking
 
@@ -64,18 +64,17 @@ Deletes are scanned for using the initial chunk size of `deleteChunkSize`. If a 
 
 The throttle level is set as the maximum allowed time spent in the source database as a percentage of total execution time.
 
-It's pretty crude, but works well to leave enough space for others to run what they need.
+It's pretty crude, but works well enough to make SSLR a nice database citizen.
 
 If you can fully load the source database while running a sync job, set the throttle percentage value to 100 for unthrottled operation.
 
 ### Job splitting
 
-The replication is run one table at a time. Replicating many large tables will lead to long complete sync cycles. In those cases, it might make sense to split the sync job into several different SSLR configurations.
+A replication job runs through all tables one at a time. Replicating many large tables will lead to long complete sync cycles. In those cases, it might make sense to split the sync job into several different SSLR configurations.
 
 As long as the same table is not synced by more than one job, jobs can run in parallel.
 
-Since scanning for deleted rows can be slow for large tables, you can split your replication jobs into update-only and delete-only jobs and run several updates before running deletes.
-Or - possibly running delete jobs only once per week, depending on your needs and the data structure.
+Since scanning for deleted rows can be slow for large tables, you can split your replication jobs into update-only and delete-only jobs and run several updates before running deletes. Or - possibly running delete jobs only once per week, depending on your needs.
 
 ### Logging
 

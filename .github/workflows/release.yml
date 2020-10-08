@@ -1,0 +1,84 @@
+name: Release build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+
+  build:
+    name: Build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: ^1.14
+      id: go
+
+    - name: Check out code
+      uses: actions/checkout@v2
+
+    - name: Build
+      run: go build -v .
+
+    - name: Save artifacts
+      uses: actions/upload-artifact@v1
+      with:
+        name: ${{ format('sslr-{0}', matrix.os) }}
+        path: sslr
+  
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Set TAG
+        run: echo ::set-env name=TAG::$(echo ${GITHUB_REF:10})
+
+      - name: Set ARCHIVE
+        run: echo ::set-env name=ARCHIVE::sslr-${TAG}.tgz
+
+      - uses: actions/download-artifact@v1.0.0
+        with:
+          name: sslr-macos-latest
+          path: macos
+
+      - uses: actions/download-artifact@v1.0.0
+        with:
+          name: sslr-ubuntu-latest
+          path: linux
+
+      - uses: actions/download-artifact@v1.0.0
+        with:
+          name: sslr-windows-latest
+          path: windows
+
+      - name: Pack release
+        id: pack-release
+        run: tar czf $ARCHIVE linux macos windows
+
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@master
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: ${{ env.TAG }}
+          body: ""
+          draft: true
+      
+      - name: Upload release assets
+        uses: actions/upload-release-asset@v1.0.1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.ARCHIVE }}
+          asset_name: ${{ env.ARCHIVE }}
+          asset_content_type: application/tar+gzip

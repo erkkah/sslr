@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"reflect"
+	"strings"
 )
 
 // Config is the main configuration for SSLR
@@ -62,6 +63,10 @@ func validateConfig(jsonData []byte) error {
 
 	numFields := configType.NumField()
 	validField := func(field string) bool {
+		// Comment hack
+		if strings.HasPrefix(field, "/*") {
+			return true
+		}
 		for i := 0; i < numFields; i++ {
 			tag := configType.Field(i).Tag
 			value, ok := tag.Lookup("json")

@@ -1,7 +1,46 @@
 {
-    "source": "postgres://system:password@localhost/babyshop?default_transaction_read_only=true",
+    "/* Connection URLS ":"*/",
+    "source": "postgres://postgres:super-secret@localhost:2345/test?default_transaction_read_only=true",
     "target": "postgres://postgres:super-secret@localhost:2345/sslr",
+
+    "/* List of tables to sync ":"*/",
     "tables": [
-        "products.display_product"
-    ]
+        "timestamps"
+    ],
+
+    "/* Everything below is optional ":"*/",
+
+    "/* Filtered tables, with 'where' clause ":"*/",
+    "filteredTables": {
+        "people": {
+            "where": "name like 'bob%'"
+        }
+    },
+
+    "/* New or updated rows will be applied in this chunk size ":"*/",
+    "updateChunkSize": 10000,
+
+    "/* Source table will be scanned for deleted rows starting at this chunk size ":"*/",
+    "deleteChunkSize": 50000,
+
+    "/* Chunk size for when to stop divide and conquer while scanning for deleted rows ":"*/",
+    "minDeleteChunkSize": 250,
+
+    "/* Max source database utilization as a percentage of total execution time ":"*/",
+    "throttlePercentage": 75,
+
+    "/* Full table copy will be performed when target table has less than (fullCopyThreshold * source_rows) rows ":"*/",
+    "fullCopyThreshold": 0.5,
+
+    "/* Sync added and updated rows ":"*/",
+    "syncUpdates": true,
+
+    "/* Sync deleted rows ":"*/",
+    "syncDeletes": true,
+
+    "/* Perform full table copy instead of exiting when schema changes are detected ":"*/",
+    "resyncOnSchemaChange": false,
+
+    "/* Name of SSLR state table in the target database":"*/",
+    "stateTable": "__sslr_state"
 }

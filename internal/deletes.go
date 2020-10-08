@@ -26,7 +26,10 @@ func (job *Job) syncDeletedRows(table string, where string) error {
 
 	for ; startKey < keyRange.max; startKey += chunkSize {
 		throttle.start()
-		job.syncDeletedRowRange(table, primaryKey, startKey, startKey+chunkSize, where)
+		err = job.syncDeletedRowRange(table, primaryKey, startKey, startKey+chunkSize, where)
+		if err != nil {
+			return err
+		}
 		throttle.end()
 		throttle.wait()
 	}
@@ -43,6 +46,7 @@ func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey ui
 	if err != nil {
 		return err
 	}
+	logger.Debug.Printf("Source hash: %s, target hash: %s", sourceHash, targetHash)
 	if sourceHash != targetHash {
 		chunkSize := endKey - startKey
 		if chunkSize <= job.cfg.MinDeleteChunkSize {
@@ -111,13 +115,12 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey uin
 
 	var columnNames []string
 	columns := rows.FieldDescriptions()
-	for _, column := range columns[1:] {
+	for _, column := range columns {
 		columnNames = append(columnNames, string(column.Name))
 	}
 
 	d := fmt.Sprintf(`--sql 
 	delete from %[1]s
-	where
 	where
 		%[2]s >= $1
 	and
@@ -130,7 +133,7 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey uin
 	}
 
 	identifier := strings.Split(table, ".")
-	updatedRows, err := tx.CopyFrom(ctx, identifier, columnNames, rows)
+	rowsRead, err := tx.CopyFrom(ctx, identifier, columnNames, rows)
 	if err != nil {
 		return err
 	}
@@ -139,7 +142,7 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey uin
 	if err != nil {
 		return err
 	}
-	job.updatedRows += uint32(updatedRows)
+	job.updatedRows += uint32(rowsRead)
 	tx = nil
 	return nil
 }
@@ -151,7 +154,7 @@ func getKeyHash(conn *pgx.Conn, table string, primaryKey string, startKey, endKe
 	}
 	q := `--sql 
 	select
-		md5(array_agg(id)::varchar) as hash
+		coalesce(md5(array_agg(id)::varchar), '') as hash
 	from (
 		select
 			%[1]s as id

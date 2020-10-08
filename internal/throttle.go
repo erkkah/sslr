@@ -37,9 +37,13 @@ func (t *throttledOperation) end() {
 
 func (t *throttledOperation) wait() {
 	totalDuration := time.Since(t.startTime)
-	utilizationLimit := float64(totalDuration.Milliseconds()) * t.level
 	utilization := float64(t.totalJobDuration.Milliseconds())
-	logger.Debug.Printf("Utilization %.2f%%", 100*t.level*utilization/utilizationLimit)
+	logger.Debug.Printf("Utilization %.2f%%", 100*utilization/float64(totalDuration.Milliseconds()))
+	if t.level >= 1 {
+		return
+	}
+
+	utilizationLimit := float64(totalDuration.Milliseconds()) * t.level
 	if utilization > utilizationLimit {
 		waitTime := time.Duration(2*(utilization-utilizationLimit)) * time.Millisecond
 		logger.Debug.Printf("Waiting %v to keep utilization at %.2f%%", waitTime, t.level*100)

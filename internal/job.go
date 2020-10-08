@@ -248,16 +248,49 @@ func (job *Job) copyFullTable(table string, where string) error {
 
 	logger.Info.Printf("Running streaming copy")
 	identifier := strings.Split(table, ".")
-	rowCount, err := tx.CopyFrom(ctx, identifier, columnNames, rows)
+	updatedRows, err := tx.CopyFrom(ctx, identifier, columnNames, newReportingSource(rows))
 	if err != nil {
 		return err
 	}
-	job.updatedRows += uint32(rowCount)
 
 	err = tx.Commit(ctx)
 	if err != nil {
 		return err
 	}
+	job.updatedRows += uint32(updatedRows)
 	tx = nil
 	return nil
+}
+
+type reportingSource struct {
+	wrapped  pgx.CopyFromSource
+	rowsRead uint32
+}
+
+func newReportingSource(source pgx.CopyFromSource) pgx.CopyFromSource {
+	return &reportingSource{
+		source,
+		0,
+	}
+}
+
+func (r *reportingSource) Next() bool {
+	hasNext := r.wrapped.Next()
+	if hasNext {
+		r.rowsRead++
+		if r.rowsRead%10000 == 0 {
+			logger.Info.Printf("Read %v rows", r.rowsRead)
+		}
+	} else {
+		logger.Info.Printf("Done reading, %v rows in total", r.rowsRead)
+	}
+	return hasNext
+}
+
+func (r *reportingSource) Values() ([]interface{}, error) {
+	return r.wrapped.Values()
+}
+
+func (r *reportingSource) Err() error {
+	return r.wrapped.Err()
 }

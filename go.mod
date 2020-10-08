@@ -4,9 +4,8 @@ go 1.14
 
 require (
 	github.com/erkkah/letarette v0.1.1
-	github.com/jackc/pgproto3 v1.1.0
-	github.com/jackc/pgproto3/v2 v2.0.5
-	github.com/jackc/pgtype v1.5.0
 	github.com/jackc/pgx/v4 v4.9.0
 	github.com/lib/pq v1.8.0
 )
+
+replace github.com/jackc/pgtype => github.com/erkkah/pgtype v1.5.1-0.20201008073842-d166e5f64f18

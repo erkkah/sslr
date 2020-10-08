@@ -3,13 +3,9 @@ package sslr
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
-	"time"
 
 	"github.com/erkkah/letarette/pkg/logger"
-	"github.com/jackc/pgproto3/v2"
-	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 )
 
@@ -62,7 +58,7 @@ func (job *Job) getUpdateRange(table string, where string) (updateRange, error) 
 }
 
 func (job *Job) updateTableRange(table string, primaryKey string, updRange updateRange, where string) error {
-	logger.Info.Printf("Updating table %s from %v to %v", table, updRange.startXmin, updRange.endXmin)
+	logger.Debug.Printf("Updating table %s from %v to %v", table, updRange.startXmin, updRange.endXmin)
 	throttle := newThrottle("update sync", job.cfg.ThrottlePercentage)
 	xmin := updRange.startXmin
 	offset := 0
@@ -118,7 +114,6 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 				return err
 			}
 
-			fixInfiniteDates(columns, values)
 			lastUpdatedXmin := uint64(values[0].(uint32))
 			if lastUpdatedXmin == xmin {
 				offset++
@@ -130,7 +125,6 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 			rowValues = append(rowValues, values[1:])
 		}
 		throttle.end()
-		throttle.wait()
 
 		if len(rowValues) > 0 {
 			logger.Info.Printf("Writing to target")
@@ -139,6 +133,7 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 				return fmt.Errorf("failed to apply updates: %w", err)
 			}
 			job.updatedRows += uint32(len(rowValues))
+			throttle.wait()
 		} else {
 			lastCompleteXmin = xmin
 			xmin++
@@ -153,23 +148,6 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 	}
 
 	return nil
-}
-
-func fixInfiniteDates(columns []pgproto3.FieldDescription, values []interface{}) {
-	for i, any := range values {
-		switch columns[i].DataTypeOID {
-		case 1114: // timestamp
-			fallthrough
-		case 1184: // timestamptz
-			if infinity, ok := any.(pgtype.InfinityModifier); ok {
-				if infinity == pgtype.Infinity {
-					values[i] = time.Unix(math.MaxInt32*100, 0)
-				} else if infinity == pgtype.NegativeInfinity {
-					values[i] = time.Unix(0, 0)
-				}
-			}
-		}
-	}
 }
 
 func applyUpdates(target *pgx.Conn, table string, primaryKey string, columns []string, values [][]interface{}) error {

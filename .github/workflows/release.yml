@@ -30,11 +30,14 @@ jobs:
     - name: Build
       run: go build -v .
 
+    - name: Pack binaries
+      run: tar czf binaries.tgz ${{ format('sslr{0}', matrix.extension) }}
+
     - name: Save artifacts
       uses: actions/upload-artifact@v1
       with:
         name: ${{ format('sslr-{0}', matrix.os) }}
-        path: ${{ format('sslr{0}', matrix.extension) }}
+        path: binaries.tgz
   
   release:
     name: Release
@@ -64,6 +67,9 @@ jobs:
         with:
           name: sslr-windows-latest
           path: windows
+
+      - name: Unpack binaries
+        run: for os in linux macos windows; do (cd $os && tar xzf binaries.tgz && rm binaries.tgz); 
 
       - name: Pack release
         id: pack-release

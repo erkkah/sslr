@@ -34,7 +34,7 @@ jobs:
       uses: actions/upload-artifact@v1
       with:
         name: ${{ format('sslr-{0}', matrix.os) }}
-        path: ${{ format('sslr{0}', matrix.extension }}
+        path: ${{ format('sslr{0}', matrix.extension) }}
   
   release:
     name: Release

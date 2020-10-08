@@ -22,14 +22,18 @@ func (u updateRange) empty() bool {
 func (job *Job) getUpdateRange(table string, where string) (updateRange, error) {
 	var resultRange updateRange
 
-	state, err := job.getTableState(table)
-	if err != nil {
-		return resultRange, err
-	}
-	if state.lastSeenXmin == 0 {
+	if _, ok := job.forceSync[table]; ok {
 		resultRange.fullTable = true
 	} else {
-		resultRange.startXmin = state.lastSeenXmin + 1
+		state, err := job.getTableState(table)
+		if err != nil {
+			return resultRange, err
+		}
+		if state.lastSeenXmin == 0 {
+			resultRange.fullTable = true
+		} else {
+			resultRange.startXmin = state.lastSeenXmin + 1
+		}
 	}
 
 	var whereClause string
@@ -40,18 +44,20 @@ func (job *Job) getUpdateRange(table string, where string) (updateRange, error) 
 	row := job.source.QueryRow(context.Background(), q)
 
 	var sourceLength uint64
-	err = row.Scan(&sourceLength, &resultRange.endXmin)
+	err := row.Scan(&sourceLength, &resultRange.endXmin)
 	if err != nil {
 		return resultRange, err
 	}
 
-	targetLength, err := getTableLength(job.target, table, where)
-	if err != nil {
-		return resultRange, err
-	}
+	if !resultRange.fullTable {
+		targetLength, err := getTableLength(job.target, table, where)
+		if err != nil {
+			return resultRange, err
+		}
 
-	if targetLength < sourceLength/2 {
-		resultRange.fullTable = true
+		if float64(targetLength) < float64(sourceLength)*job.cfg.FullCopyThreshold {
+			resultRange.fullTable = true
+		}
 	}
 
 	return resultRange, nil

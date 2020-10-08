@@ -2,6 +2,7 @@ package sslr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -17,6 +18,7 @@ type Job struct {
 	cfg         Config
 	primaryKeys map[string][]string
 	columns     map[string][]string
+	forceSync   map[string]bool
 	source      *pgx.Conn
 	target      *pgx.Conn
 	start       time.Time
@@ -29,6 +31,7 @@ func NewJob(config Config) (*Job, error) {
 		cfg:         config,
 		primaryKeys: make(map[string][]string),
 		columns:     make(map[string][]string),
+		forceSync:   make(map[string]bool),
 	}
 	return &job, nil
 }
@@ -78,6 +81,8 @@ func (job *Job) connect() error {
 	return nil
 }
 
+var errSchemaMismatch = errors.New("schema mismatch")
+
 func (job *Job) validateTable(table string) error {
 	schema, err := extractTableSchema(job.source, table)
 	if err != nil {
@@ -94,8 +99,8 @@ func (job *Job) validateTable(table string) error {
 			return err
 		}
 		if targetSchema != schema {
-			logger.Info.Printf("Schemas differ:\nsource: %s\ntarget: %s", schema, targetSchema)
-			return fmt.Errorf("schema mismatch, table=%q", table)
+			logger.Debug.Printf("Schemas differ:\nsource: %s\ntarget: %s", schema, targetSchema)
+			return errSchemaMismatch
 		}
 	} else {
 		err = createTable(job.target, table, schema)
@@ -127,6 +132,11 @@ func (job *Job) validateTable(table string) error {
 func (job *Job) validateTables() error {
 	for _, table := range job.cfg.SourceTables {
 		err := job.validateTable(table)
+		if err == errSchemaMismatch && job.cfg.ResyncOnSchemaChange {
+			logger.Info.Printf("Schema for table %q has changed, marking for re-synk", table)
+			job.forceSync[table] = true
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -134,6 +144,11 @@ func (job *Job) validateTables() error {
 
 	for table := range job.cfg.FilteredSourceTables {
 		err := job.validateTable(table)
+		if err == errSchemaMismatch && job.cfg.ResyncOnSchemaChange {
+			logger.Info.Printf("Schema for table %q has changed, marking for re-synk", table)
+			job.forceSync[table] = true
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -173,25 +188,31 @@ func (job *Job) updateTable(table string, where string) error {
 	if err != nil {
 		return err
 	}
-	logger.Info.Printf("Fetching update range for table %s", table)
-	updateRange, err := job.getUpdateRange(table, where)
-	if err != nil {
-		return fmt.Errorf("failed to get update range: %w", err)
-	}
 
-	if updateRange.fullTable {
-		logger.Info.Printf("Performing full table sync for stale / empty table")
-		err = job.copyFullTable(table, where)
+	var updateRange updateRange
+
+	if job.cfg.SyncUpdates {
+		logger.Info.Printf("Fetching update range for table %s", table)
+		updateRange, err = job.getUpdateRange(table, where)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get update range: %w", err)
 		}
-		err = job.setTableState(table, tableState{
-			lastSeenXmin: updateRange.endXmin,
-		})
-		if err != nil {
-			return err
+
+		if updateRange.fullTable {
+			logger.Info.Printf("Performing full table sync for stale / empty table")
+			err = job.copyFullTable(table, where)
+			if err != nil {
+				return err
+			}
+			err = job.setTableState(table, tableState{
+				lastSeenXmin: updateRange.endXmin,
+			})
+			if err != nil {
+				return err
+			}
+			return nil
 		}
-	} else {
+
 		if !updateRange.empty() {
 			logger.Info.Printf("Updating table %s", table)
 			err = job.updateTableRange(table, primaryKey, updateRange, where)
@@ -199,7 +220,9 @@ func (job *Job) updateTable(table string, where string) error {
 				return err
 			}
 		}
+	}
 
+	if job.cfg.SyncDeletes {
 		logger.Info.Printf("Syncing deletions for table %s", table)
 		err = job.syncDeletedRows(table, where)
 		if err != nil {

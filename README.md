@@ -1,3 +1,7 @@
+[![Go Report Card](https://goreportcard.com/badge/github.com/erkkah/sslr)](https://goreportcard.com/report/github.com/erkkah/sslr)
+[![Generic badge](https://img.shields.io/badge/Hack-Yep!-gold.svg)](https://shields.io/)
+
+
 # SSLR - Simple Stupid Logical Replication
 
 **A simple, stupid logical replication tool for PostgreSQL databases.**

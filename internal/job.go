@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/erkkah/letarette/pkg/logger"
@@ -77,50 +78,64 @@ func (job *Job) connect() error {
 	return nil
 }
 
+func (job *Job) validateTable(table string) error {
+	schema, err := extractTableSchema(job.source, table)
+	if err != nil {
+		return err
+	}
+
+	targetExists, err := objectExists(job.target, table)
+	if err != nil {
+		return err
+	}
+	if targetExists {
+		targetSchema, err := extractTableSchema(job.target, table)
+		if err != nil {
+			return err
+		}
+		if targetSchema != schema {
+			logger.Info.Printf("Schemas differ:\nsource: %s\ntarget: %s", schema, targetSchema)
+			return fmt.Errorf("schema mismatch, table=%q", table)
+		}
+	} else {
+		err = createTable(job.target, table, schema)
+
+		if err != nil {
+			return fmt.Errorf("failed to create target table: %w", err)
+		}
+	}
+
+	indices, err := extractTableIndices(job.source, table)
+	if err != nil {
+		return err
+	}
+
+	err = applyIndices(job.target, table, indices)
+	if err != nil {
+		return fmt.Errorf("failed to create indices: %w", err)
+	}
+
+	for _, index := range indices {
+		if index.primary {
+			job.primaryKeys[table] = index.columns
+		}
+	}
+
+	return nil
+}
+
 func (job *Job) validateTables() error {
 	for _, table := range job.cfg.SourceTables {
-		schema, err := extractTableSchema(job.source, table)
+		err := job.validateTable(table)
 		if err != nil {
 			return err
 		}
+	}
 
-		logger.Debug.Printf("%s\n", schema)
-
-		targetExists, err := objectExists(job.target, table)
+	for table := range job.cfg.FilteredSourceTables {
+		err := job.validateTable(table)
 		if err != nil {
 			return err
-		}
-		if targetExists {
-			targetSchema, err := extractTableSchema(job.target, table)
-			if err != nil {
-				return err
-			}
-			if targetSchema != schema {
-				return fmt.Errorf("schema mismatch, table=%q", table)
-			}
-		} else {
-			err = createTable(job.target, table, schema)
-
-			if err != nil {
-				return fmt.Errorf("failed to create target table: %w", err)
-			}
-		}
-
-		indices, err := extractTableIndices(job.source, table)
-		if err != nil {
-			return err
-		}
-		logger.Debug.Printf("%v\n", indices)
-
-		err = applyIndices(job.target, table, indices)
-		if err != nil {
-			return fmt.Errorf("failed to create indices: %w", err)
-		}
-
-		for _, index := range indices {
-			if index.primary {
-				job.primaryKeys[table] = index.columns
-			}
 		}
 	}
 	return nil
@@ -129,7 +144,7 @@ func (job *Job) validateTables() error {
 func (job *Job) getPrimaryKey(table string) (string, error) {
 	primaryKeys := job.primaryKeys[table]
 	if len(primaryKeys) != 1 {
-		return "", fmt.Errorf("table must have exactly one primary key column, found %v", len(primaryKeys))
+		return "", fmt.Errorf("table %q must have exactly one primary key column, found %v", table, len(primaryKeys))
 	}
 	return primaryKeys[0], nil
 }
@@ -158,23 +173,91 @@ func (job *Job) updateTable(table string, where string) error {
 	if err != nil {
 		return err
 	}
+	logger.Info.Printf("Fetching update range for table %s", table)
 	updateRange, err := job.getUpdateRange(table, where)
 	if err != nil {
 		return fmt.Errorf("failed to get update range: %w", err)
 	}
-	if !updateRange.empty() {
-		logger.Info.Printf("Updating table %s", table)
-		err = job.updateTableRange(table, primaryKey, updateRange, where)
+
+	if updateRange.fullTable {
+		logger.Info.Printf("Performing full table sync for stale / empty table")
+		err = job.copyFullTable(table, where)
 		if err != nil {
 			return err
 		}
+		err = job.setTableState(table, tableState{
+			lastSeenXmin: updateRange.endXmin,
+		})
+		if err != nil {
+			return err
+		}
+	} else {
+		if !updateRange.empty() {
+			logger.Info.Printf("Updating table %s", table)
+			err = job.updateTableRange(table, primaryKey, updateRange, where)
+			if err != nil {
+				return err
+			}
+		}
+
+		logger.Info.Printf("Syncing deletions for table %s", table)
+		err = job.syncDeletedRows(table, where)
+		if err != nil {
+			logger.Error.Printf("Failed to sync deletions for table %s: %v", table, err)
+		}
 	}
 
-	logger.Info.Printf("Syncing deletions for table %s", table)
-	err = job.syncDeletedRows(table, where)
+	return nil
+}
+
+func (job *Job) copyFullTable(table string, where string) error {
+	ctx := context.Background()
+
+	var whereClause string
+	if len(where) > 0 {
+		whereClause = "where " + where
+	}
+	q := fmt.Sprintf("select * from %s %s", table, whereClause)
+	rows, err := job.source.Query(ctx, q)
 	if err != nil {
-		logger.Error.Printf("Failed to sync deletions for table %s: %v", table, err)
+		return err
+	}
+	defer rows.Close()
+
+	var columnNames []string
+	columns := rows.FieldDescriptions()
+	for _, column := range columns {
+		columnNames = append(columnNames, string(column.Name))
 	}
 
+	tx, err := job.target.Begin(ctx)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if tx != nil {
+			tx.Rollback(ctx)
+		}
+	}()
+
+	_, err = tx.Exec(ctx, fmt.Sprintf("delete from %s", table))
+	if err != nil {
+		return fmt.Errorf("failed to delete old data: %w", err)
+	}
+
+	logger.Info.Printf("Running streaming copy")
+	identifier := strings.Split(table, ".")
+	rowCount, err := tx.CopyFrom(ctx, identifier, columnNames, rows)
+	if err != nil {
+		return err
+	}
+	job.updatedRows += uint32(rowCount)
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		return err
+	}
+	tx = nil
 	return nil
 }

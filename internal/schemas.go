@@ -98,6 +98,7 @@ func extractTableIndices(conn *pgx.Conn, tablePath string) ([]tableIndex, error)
 	if err != nil {
 		return result, err
 	}
+	defer rows.Close()
 
 	for rows.Next() {
 		var index tableIndex

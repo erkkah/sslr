@@ -14,6 +14,7 @@ import (
 )
 
 type updateRange struct {
+	fullTable bool
 	startXmin uint64
 	endXmin   uint64
 }
@@ -29,17 +30,32 @@ func (job *Job) getUpdateRange(table string, where string) (updateRange, error) 
 	if err != nil {
 		return resultRange, err
 	}
-	resultRange.startXmin = state.lastSeenXmin + 1
+	if state.lastSeenXmin == 0 {
+		resultRange.fullTable = true
+	} else {
+		resultRange.startXmin = state.lastSeenXmin + 1
+	}
 
 	var whereClause string
 	if len(where) > 0 {
 		whereClause = "where " + where
 	}
-	q := fmt.Sprintf("select max(xmin::text::bigint) from %s %s", table, whereClause)
+	q := fmt.Sprintf("select count(*), max(xmin::text::bigint) from %s %s", table, whereClause)
 	row := job.source.QueryRow(context.Background(), q)
-	err = row.Scan(&resultRange.endXmin)
+
+	var sourceLength uint64
+	err = row.Scan(&sourceLength, &resultRange.endXmin)
 	if err != nil {
 		return resultRange, err
+	}
+
+	targetLength, err := getTableLength(job.target, table, where)
+	if err != nil {
+		return resultRange, err
+	}
+
+	if targetLength < sourceLength/2 {
+		resultRange.fullTable = true
 	}
 
 	return resultRange, nil
@@ -47,7 +63,7 @@ func (job *Job) getUpdateRange(table string, where string) (updateRange, error) 
 
 func (job *Job) updateTableRange(table string, primaryKey string, updRange updateRange, where string) error {
 	logger.Info.Printf("Updating table %s from %v to %v", table, updRange.startXmin, updRange.endXmin)
-	throttle := newThrottle(job.cfg.ThrottlePercentage)
+	throttle := newThrottle("update sync", job.cfg.ThrottlePercentage)
 	xmin := updRange.startXmin
 	offset := 0
 
@@ -74,6 +90,9 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 		limit
 			$3
 		;`, table, primaryKey, whereClause)
+
+		logger.Info.Printf("Reading from source")
+
 		rows, err := job.source.Query(context.Background(), q, xmin, offset, job.cfg.UpdateChunkSize)
 		if err != nil {
 			return fmt.Errorf("query execution failure: %w", err)
@@ -82,6 +101,7 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 		if rowsErr != nil && rowsErr != pgx.ErrNoRows {
 			return fmt.Errorf("row failure: %w", rowsErr)
 		}
+		defer rows.Close()
 
 		var columnNames []string
 		columns := rows.FieldDescriptions()
@@ -113,6 +133,7 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 		throttle.wait()
 
 		if len(rowValues) > 0 {
+			logger.Info.Printf("Writing to target")
 			err = applyUpdates(job.target, table, primaryKey, columnNames, rowValues)
 			if err != nil {
 				return fmt.Errorf("failed to apply updates: %w", err)
@@ -207,4 +228,27 @@ func deleteRows(target pgx.Tx, table string, primaryKey string, keys []int32) er
 	;`, table, primaryKey)
 	_, err := target.Exec(context.Background(), d, keys)
 	return err
+}
+
+func getTableLength(conn *pgx.Conn, table string, where string) (uint64, error) {
+	var whereClause string
+	if len(where) > 0 {
+		whereClause = "where " + where
+	}
+
+	q := fmt.Sprintf(`--sql 
+	select
+		count(*)
+	from
+		%[1]s
+	%[2]s
+	;`, table, whereClause)
+
+	row := conn.QueryRow(context.Background(), q)
+	var count uint64
+	err := row.Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }

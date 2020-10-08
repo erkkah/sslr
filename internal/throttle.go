@@ -8,19 +8,22 @@ import (
 )
 
 type throttledOperation struct {
+	name             string
 	level            float64
 	startTime        time.Time
 	totalJobDuration time.Duration
 	jobStartTime     time.Time
 }
 
-func newThrottle(percentage float64) *throttledOperation {
+func newThrottle(name string, percentage float64) *throttledOperation {
 	return &throttledOperation{
+		name:  name,
 		level: math.Max(1, math.Min(percentage, 100)) / 100,
 	}
 }
 
 func (t *throttledOperation) start() {
+	logger.Debug.Printf("Started %s", t.name)
 	t.jobStartTime = time.Now()
 	if t.startTime.IsZero() {
 		t.startTime = t.jobStartTime
@@ -28,6 +31,7 @@ func (t *throttledOperation) start() {
 }
 
 func (t *throttledOperation) end() {
+	logger.Debug.Printf("Ended %s", t.name)
 	t.totalJobDuration += time.Since(t.jobStartTime)
 }
 

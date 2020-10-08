@@ -25,7 +25,7 @@ Download the tool, and create a file called `sslr.json` containing your replicat
 
 A minimal config looks like this:
 
-```json
+```yaml
 {
     "source": "postgres://postgres:super-secret@localhost:2345/test?default_transaction_read_only=true",
     "target": "postgres://postgres:super-secret@localhost:2345/sslr",
@@ -86,7 +86,7 @@ To get more feedback while tweaking options, use the `LOG_LEVEL` environment var
 
 ### Documented full configuration example
 
-```json
+```yaml
 {
     "/* Connection URLS ":"*/",
     "source": "postgres://postgres:super-secret@localhost:2345/test?default_transaction_read_only=true",

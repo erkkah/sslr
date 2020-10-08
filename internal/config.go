@@ -27,7 +27,8 @@ type Config struct {
 	FullCopyThreshold    float64 `json:"fullCopyThreshold"`
 }
 
-// LoadConfig reads a JSON - formatted config file into a Config
+// LoadConfig reads a JSON - formatted config file into a Config.
+// The loaded JSON is validated against the expected fields.
 func LoadConfig(fileName string) (Config, error) {
 	// Config with default values
 	config := Config{

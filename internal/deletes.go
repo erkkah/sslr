@@ -22,7 +22,7 @@ func (job *Job) syncDeletedRows(table string, where string) error {
 
 	chunkSize := job.cfg.DeleteChunkSize
 	startKey := roundDownToEven(keyRange.min, chunkSize)
-	throttle := newThrottle("delete sync", job.cfg.ThrottlePercentage)
+	throttle := newThrottle("deletes", job.cfg.ThrottlePercentage)
 
 	for ; startKey < keyRange.max; startKey += chunkSize {
 		throttle.start()

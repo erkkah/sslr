@@ -17,7 +17,7 @@
         }
     },
 
-    "/* New or updated rows will be applied in this chunk size ":"*/",
+    "/* New or updated rows will be applied using this chunk size ":"*/",
     "updateChunkSize": 10000,
 
     "/* Source table will be scanned for deleted rows starting at this chunk size ":"*/",

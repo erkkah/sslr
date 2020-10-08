@@ -65,7 +65,7 @@ func (job *Job) getUpdateRange(table string, where string) (updateRange, error) 
 
 func (job *Job) updateTableRange(table string, primaryKey string, updRange updateRange, where string) error {
 	logger.Debug.Printf("Updating table %s from %v to %v", table, updRange.startXmin, updRange.endXmin)
-	throttle := newThrottle("update sync", job.cfg.ThrottlePercentage)
+	throttle := newThrottle("updates", job.cfg.ThrottlePercentage)
 	xmin := updRange.startXmin
 	offset := 0
 

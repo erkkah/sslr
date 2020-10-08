@@ -14,13 +14,13 @@ func extractTableSchema(conn *pgx.Conn, tablePath string) (string, error) {
 	row := conn.QueryRow(context.Background(),
 		`--sql
     select
-        'create table ' || relname || E'\n(\n' ||
+        'create table ' || relname || '(' ||
         array_to_string(
             array_agg(
-                '    ' || column_name || ' ' ||  type || ' '|| not_null
+                column_name || ' ' || type || ' ' || not_null
             )
-            , E',\n'
-        ) || E'\n);\n'
+            , ','
+        ) || ');'
     from
     (
         select 

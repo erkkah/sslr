@@ -1,6 +1,6 @@
 # SSLR - Simple Stupid Logical Replication
 
-**A simple, stupid logical replication solution for PostgreSQL databases.**
+**A simple, stupid logical replication tool for PostgreSQL databases.**
 
 With so many existing solutions for replicating PostgreSQL databases, why did I create SSLR?
 

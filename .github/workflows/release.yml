@@ -69,7 +69,7 @@ jobs:
           path: windows
 
       - name: Unpack binaries
-        run: for os in linux macos windows; do (cd $os && tar xzf binaries.tgz && rm binaries.tgz); 
+        run: for os in linux macos windows; do (cd $os && tar xzf binaries.tgz && rm binaries.tgz); done
 
       - name: Pack release
         id: pack-release

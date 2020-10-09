@@ -24,9 +24,9 @@ func (job *Job) syncDeletedRows(table string, where string) error {
 	startKey := roundDownToEven(keyRange.min, chunkSize)
 	throttle := newThrottle("deletes", job.cfg.ThrottlePercentage)
 
-	for ; startKey < keyRange.max; startKey += chunkSize {
+	for startKey < keyRange.max {
 		throttle.start()
-		err = job.syncDeletedRowRange(table, primaryKey, startKey, startKey+chunkSize, where)
+		startKey, err = job.syncDeletedRowRange(table, primaryKey, startKey, chunkSize, where)
 		if err != nil {
 			return err
 		}
@@ -37,37 +37,74 @@ func (job *Job) syncDeletedRows(table string, where string) error {
 	return nil
 }
 
-func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey uint32, endKey uint32, where string) error {
+func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey uint32, chunkSize uint32, where string) (endKey uint32, err error) {
+	endKey, err = getKeyAtOffset(job.source, table, primaryKey, startKey, chunkSize, where)
+	if err != nil {
+		return
+	}
 	sourceHash, err := getKeyHash(job.source, table, primaryKey, startKey, endKey, where)
 	if err != nil {
-		return err
+		return
 	}
 	targetHash, err := getKeyHash(job.target, table, primaryKey, startKey, endKey, where)
 	if err != nil {
-		return err
+		return
 	}
+	logger.Debug.Printf("Start key: %v, end key: %v, chunk size: %v", startKey, endKey, chunkSize)
 	logger.Debug.Printf("Source hash: %s, target hash: %s", sourceHash, targetHash)
 	if sourceHash != targetHash {
-		chunkSize := endKey - startKey
 		if chunkSize <= job.cfg.MinDeleteChunkSize {
 			logger.Debug.Printf("Updating (%v - %v)", startKey, endKey)
 			err = job.updateChangedRange(table, primaryKey, startKey, endKey, where)
 			if err != nil {
-				return err
+				return
 			}
 		} else {
 			nextChunkSize := chunkSize / 2
-			err = job.syncDeletedRowRange(table, primaryKey, startKey, startKey+nextChunkSize, where)
+			var midKey uint32
+			midKey, err = job.syncDeletedRowRange(table, primaryKey, startKey, nextChunkSize, where)
 			if err != nil {
-				return err
+				return
 			}
-			err = job.syncDeletedRowRange(table, primaryKey, startKey+nextChunkSize, endKey, where)
+			_, err = job.syncDeletedRowRange(table, primaryKey, midKey, nextChunkSize, where)
 			if err != nil {
-				return err
+				return
 			}
 		}
 	}
-	return nil
+	return endKey, nil
+}
+
+func getKeyAtOffset(conn *pgx.Conn, table string, primaryKey string, startKey uint32, offset uint32, where string) (uint32, error) {
+	var whereClause string
+	if len(where) > 0 {
+		whereClause = "and " + where
+	}
+	q := fmt.Sprintf(`--sql
+	select
+		%[2]s
+	from
+	(
+		select
+			%[2]s
+		from
+			%[1]s
+		where
+			%[2]s >= $1
+			%[3]s
+		order by %[2]s
+		limit $2
+	) ids
+	order by
+		%[2]s desc
+	limit 1
+	;`, table, primaryKey, whereClause)
+
+	ctx := context.Background()
+	row := conn.QueryRow(ctx, q, startKey, offset)
+	var key uint32
+	err := row.Scan(&key)
+	return key, err
 }
 
 func (job *Job) updateChangedRange(table string, primaryKey string, startKey uint32, endKey uint32, where string) error {

@@ -173,7 +173,6 @@ For each table:
 
 - Since replication is done table by table, there are moments of referential inconsistency in the target database
 - As the target is meant for reading only, no triggers, constraints, et.c. except for the primary key are copied to the target
-- Deletions for tables with non-numerical primary key are not handled
 - Multi-column primary keys are not supported
 - `xmin` wrapping is not handled
 - Full table copying is not throttled

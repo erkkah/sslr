@@ -18,7 +18,7 @@ func newThrottle(name string, percentage float64) *throttledOperation {
 }
 
 func (t *throttledOperation) start() {
-	logger.Debug.Printf("Started %s", t.name)
+	logger.Debug.Printf("Starting %s", t.name)
 	t.jobStartTime = time.Now()
 	if t.startTime.IsZero() {
 		t.startTime = t.jobStartTime
@@ -26,7 +26,7 @@ func (t *throttledOperation) start() {
 }
 
 func (t *throttledOperation) end() {
-	logger.Debug.Printf("Ended %s", t.name)
+	logger.Debug.Printf("Stopped %s", t.name)
 	t.totalJobDuration += time.Since(t.jobStartTime)
 }
 

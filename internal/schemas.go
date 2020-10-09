@@ -2,11 +2,62 @@ package sslr
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v4"
 )
+
+// PrimaryKey wraps integer and string valued keys
+type PrimaryKey struct {
+	value interface{}
+}
+
+// Scan implements Scanner interface
+func (pk *PrimaryKey) Scan(value interface{}) error {
+	switch value.(type) {
+	case int64, string:
+		pk.value = value
+	default:
+		return fmt.Errorf("Unhandled primary key type: %v", value)
+	}
+	return nil
+}
+
+// Value implements Valuer interface
+func (pk *PrimaryKey) Value() (driver.Value, error) {
+	switch pk.value.(type) {
+	case int64:
+		return driver.Int32.ConvertValue(pk.value)
+	case string:
+		return driver.String.ConvertValue(pk.value)
+	default:
+		return nil, fmt.Errorf("Unhandled primary key type: %v", pk.value)
+	}
+}
+
+// PrimaryKeySlice wraps a slice of PrimaryKey for easy conversion
+type PrimaryKeySlice []PrimaryKey
+
+// StringValues converts a slice of PrimaryKey to a slice of string
+func (keys PrimaryKeySlice) StringValues() []string {
+	var result []string
+	for _, key := range keys {
+		result = append(result, fmt.Sprintf("%v", key))
+	}
+	return result
+}
+
+func (pk PrimaryKey) String() string {
+	return fmt.Sprintf("%v", pk.value)
+}
+
+type primaryKeyRange struct {
+	min   PrimaryKey
+	max   PrimaryKey
+	count uint32
+}
 
 func extractTableSchema(conn *pgx.Conn, tablePath string) (string, error) {
 	namespace, table := splitTablePath(tablePath)

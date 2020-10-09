@@ -21,15 +21,22 @@ func (job *Job) syncDeletedRows(table string, where string) error {
 	}
 
 	chunkSize := job.cfg.DeleteChunkSize
-	startKey := roundDownToEven(keyRange.min, chunkSize)
+	if keyRange.count < chunkSize {
+		chunkSize = keyRange.count
+	}
+	startKey := keyRange.min
 	throttle := newThrottle("deletes", job.cfg.ThrottlePercentage)
 
-	for startKey < keyRange.max {
+	for {
 		throttle.start()
-		startKey, err = job.syncDeletedRowRange(table, primaryKey, startKey, chunkSize, where)
+		endKey, err := job.syncDeletedRowRange(table, primaryKey, startKey, chunkSize, where)
 		if err != nil {
 			return err
 		}
+		if endKey == startKey {
+			break
+		}
+		startKey = endKey
 		throttle.end()
 		throttle.wait()
 	}
@@ -37,7 +44,7 @@ func (job *Job) syncDeletedRows(table string, where string) error {
 	return nil
 }
 
-func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey uint32, chunkSize uint32, where string) (endKey uint32, err error) {
+func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey PrimaryKey, chunkSize uint32, where string) (endKey PrimaryKey, err error) {
 	endKey, err = getKeyAtOffset(job.source, table, primaryKey, startKey, chunkSize, where)
 	if err != nil {
 		return
@@ -61,7 +68,7 @@ func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey ui
 			}
 		} else {
 			nextChunkSize := chunkSize / 2
-			var midKey uint32
+			var midKey PrimaryKey
 			midKey, err = job.syncDeletedRowRange(table, primaryKey, startKey, nextChunkSize, where)
 			if err != nil {
 				return
@@ -75,7 +82,7 @@ func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey ui
 	return endKey, nil
 }
 
-func getKeyAtOffset(conn *pgx.Conn, table string, primaryKey string, startKey uint32, offset uint32, where string) (uint32, error) {
+func getKeyAtOffset(conn *pgx.Conn, table string, primaryKey string, startKey PrimaryKey, offset uint32, where string) (PrimaryKey, error) {
 	var whereClause string
 	if len(where) > 0 {
 		whereClause = "and " + where
@@ -101,13 +108,13 @@ func getKeyAtOffset(conn *pgx.Conn, table string, primaryKey string, startKey ui
 	;`, table, primaryKey, whereClause)
 
 	ctx := context.Background()
-	row := conn.QueryRow(ctx, q, startKey, offset)
-	var key uint32
+	row := conn.QueryRow(ctx, q, startKey.value, offset)
+	var key PrimaryKey
 	err := row.Scan(&key)
 	return key, err
 }
 
-func (job *Job) updateChangedRange(table string, primaryKey string, startKey uint32, endKey uint32, where string) error {
+func (job *Job) updateChangedRange(table string, primaryKey string, startKey PrimaryKey, endKey PrimaryKey, where string) error {
 	ctx := context.Background()
 	tx, err := job.target.Begin(ctx)
 	if err != nil {
@@ -136,7 +143,7 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey uin
 		%[3]s
 	;`, table, primaryKey, whereClause)
 
-	rows, err := job.source.Query(ctx, q, startKey, endKey)
+	rows, err := job.source.Query(ctx, q, startKey.value, endKey.value)
 	if err != nil {
 		return err
 	}
@@ -164,7 +171,7 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey uin
 		%[2]s <= $2
 	;`, table, primaryKey)
 
-	_, err = tx.Exec(ctx, d, startKey, endKey)
+	_, err = tx.Exec(ctx, d, startKey.value, endKey.value)
 	if err != nil {
 		return err
 	}
@@ -184,7 +191,7 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey uin
 	return nil
 }
 
-func getKeyHash(conn *pgx.Conn, table string, primaryKey string, startKey, endKey uint32, where string) (string, error) {
+func getKeyHash(conn *pgx.Conn, table string, primaryKey string, startKey PrimaryKey, endKey PrimaryKey, where string) (string, error) {
 	var whereClause string
 	if len(where) > 0 {
 		whereClause = "and " + where
@@ -206,27 +213,13 @@ func getKeyHash(conn *pgx.Conn, table string, primaryKey string, startKey, endKe
 			1
 	) as t
 	;`
-	row := conn.QueryRow(context.Background(), fmt.Sprintf(q, primaryKey, table, whereClause), startKey, endKey)
+	row := conn.QueryRow(context.Background(), fmt.Sprintf(q, primaryKey, table, whereClause), startKey.value, endKey.value)
 	var hash string
 	err := row.Scan(&hash)
 	if err != nil {
 		return "", err
 	}
 	return hash, nil
-}
-
-func roundDownToEven(num uint32, chunkSize uint32) uint32 {
-	return num - (num % chunkSize)
-}
-
-func roundUpToEven(num uint64, chunkSize uint64) uint64 {
-	return num + (chunkSize - (num % chunkSize))
-}
-
-type primaryKeyRange struct {
-	min   uint32
-	max   uint32
-	count uint32
 }
 
 func getPrimaryKeyRange(conn *pgx.Conn, table string, primaryKey string, where string) (primaryKeyRange, error) {
@@ -243,7 +236,7 @@ func getPrimaryKeyRange(conn *pgx.Conn, table string, primaryKey string, where s
 	var result primaryKeyRange
 	err := row.Scan(&result.min, &result.max, &result.count)
 	if err != nil {
-		return result, fmt.Errorf("failed to load primary key range - primary key not numeric? (%v@%v): %v", primaryKey, table, err)
+		return result, fmt.Errorf("failed to load primary key range (%v@%v): %v", primaryKey, table, err)
 	}
 
 	return result, nil

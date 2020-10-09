@@ -176,9 +176,9 @@ func applyUpdates(target *pgx.Conn, table string, primaryKey string, columns []s
 		}
 	}
 
-	var keys []int32
+	var keys []PrimaryKey
 	for _, value := range values {
-		keys = append(keys, value[primaryColumnIndex].(int32))
+		keys = append(keys, PrimaryKey{value[primaryColumnIndex]})
 	}
 
 	err = deleteRows(tx, table, primaryKey, keys)
@@ -203,14 +203,15 @@ func applyUpdates(target *pgx.Conn, table string, primaryKey string, columns []s
 	return nil
 }
 
-func deleteRows(target pgx.Tx, table string, primaryKey string, keys []int32) error {
+func deleteRows(target pgx.Tx, table string, primaryKey string, keys PrimaryKeySlice) error {
 	d := fmt.Sprintf(`--sql
 	delete from %[1]s
-	where %[2]s in (
-		select * from unnest($1::int[])
+	where %[2]s::varchar in (
+		select * from unnest($1::varchar[])
 	)
 	;`, table, primaryKey)
-	_, err := target.Exec(context.Background(), d, keys)
+
+	_, err := target.Exec(context.Background(), d, keys.StringValues())
 	return err
 }
 

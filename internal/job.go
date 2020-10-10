@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/erkkah/letarette/pkg/logger"
@@ -155,12 +156,13 @@ func (job *Job) validateTables() error {
 	return nil
 }
 
-func (job *Job) getPrimaryKey(table string) (string, error) {
+func (job *Job) getPrimaryKeys(table string) ([]string, error) {
 	primaryKeys := job.primaryKeys[table]
-	if len(primaryKeys) != 1 {
-		return "", fmt.Errorf("table %q must have exactly one primary key column, found %v", table, len(primaryKeys))
+	if len(primaryKeys) < 1 {
+		return primaryKeys, fmt.Errorf("table %v does not have a primary key", table)
 	}
-	return primaryKeys[0], nil
+	sort.StringSlice(primaryKeys).Sort()
+	return primaryKeys, nil
 }
 
 func (job *Job) updateTables() error {
@@ -183,7 +185,7 @@ func (job *Job) updateTables() error {
 }
 
 func (job *Job) updateTable(table string, where string) error {
-	primaryKey, err := job.getPrimaryKey(table)
+	primaryKeys, err := job.getPrimaryKeys(table)
 	if err != nil {
 		return err
 	}
@@ -214,7 +216,7 @@ func (job *Job) updateTable(table string, where string) error {
 
 		if !updateRange.empty() {
 			logger.Info.Printf("Updating table %s", table)
-			err = job.updateTableRange(table, primaryKey, updateRange, where)
+			err = job.updateTableRange(table, primaryKeys, updateRange, where)
 			if err != nil {
 				return err
 			}

@@ -2,6 +2,7 @@ package sslr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,12 +11,12 @@ import (
 )
 
 func (job *Job) syncDeletedRows(table string, where string) error {
-	primaryKey, err := job.getPrimaryKey(table)
+	primaryKeys, err := job.getPrimaryKeys(table)
 	if err != nil {
 		return err
 	}
 
-	keyRange, err := getPrimaryKeyRange(job.source, table, primaryKey, where)
+	keyRange, err := getPrimaryKeyRange(job.source, table, primaryKeys, where)
 	if err != nil {
 		return fmt.Errorf("failed to get primary key range: %w", err)
 	}
@@ -29,11 +30,12 @@ func (job *Job) syncDeletedRows(table string, where string) error {
 
 	for {
 		throttle.start()
-		endKey, err := job.syncDeletedRowRange(table, primaryKey, startKey, chunkSize, where)
+		endKey, err := job.syncDeletedRowRange(table, primaryKeys, startKey, chunkSize, where)
 		if err != nil {
 			return err
 		}
-		if endKey == startKey {
+
+		if endKey.Equals(startKey) {
 			break
 		}
 		startKey = endKey
@@ -44,17 +46,20 @@ func (job *Job) syncDeletedRows(table string, where string) error {
 	return nil
 }
 
-func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey PrimaryKey, chunkSize uint32, where string) (endKey PrimaryKey, err error) {
-	endKey, err = getKeyAtOffset(job.source, table, primaryKey, startKey, chunkSize, where)
+func (job *Job) syncDeletedRowRange(table string, primaryKeys []string, startKey PrimaryKeySet, chunkSize uint32, where string) (endKey PrimaryKeySet, err error) {
+	endKey, err = getKeyAtOffset(job.source, table, primaryKeys, startKey, chunkSize, where)
 	if err != nil {
+		err = fmt.Errorf("failed to get key at offset: %w", err)
 		return
 	}
-	sourceHash, err := getKeyHash(job.source, table, primaryKey, startKey, endKey, where)
+	sourceHash, err := getKeyHash(job.source, table, primaryKeys, startKey, endKey, where)
 	if err != nil {
+		err = fmt.Errorf("failed to get source key hash: %w", err)
 		return
 	}
-	targetHash, err := getKeyHash(job.target, table, primaryKey, startKey, endKey, where)
+	targetHash, err := getKeyHash(job.target, table, primaryKeys, startKey, endKey, where)
 	if err != nil {
+		err = fmt.Errorf("failed to get target key hash: %w", err)
 		return
 	}
 	logger.Debug.Printf("Start key: %v, end key: %v, chunk size: %v", startKey, endKey, chunkSize)
@@ -62,18 +67,19 @@ func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey Pr
 	if sourceHash != targetHash {
 		if chunkSize <= job.cfg.MinDeleteChunkSize {
 			logger.Debug.Printf("Updating (%v - %v)", startKey, endKey)
-			err = job.updateChangedRange(table, primaryKey, startKey, endKey, where)
+			err = job.updateChangedRange(table, primaryKeys, startKey, endKey, where)
 			if err != nil {
+				err = fmt.Errorf("failed to update changed range: %w", err)
 				return
 			}
 		} else {
 			nextChunkSize := chunkSize / 2
-			var midKey PrimaryKey
-			midKey, err = job.syncDeletedRowRange(table, primaryKey, startKey, nextChunkSize, where)
+			var midKey PrimaryKeySet
+			midKey, err = job.syncDeletedRowRange(table, primaryKeys, startKey, nextChunkSize, where)
 			if err != nil {
 				return
 			}
-			_, err = job.syncDeletedRowRange(table, primaryKey, midKey, nextChunkSize, where)
+			_, err = job.syncDeletedRowRange(table, primaryKeys, midKey, nextChunkSize, where)
 			if err != nil {
 				return
 			}
@@ -82,11 +88,38 @@ func (job *Job) syncDeletedRowRange(table string, primaryKey string, startKey Pr
 	return endKey, nil
 }
 
-func getKeyAtOffset(conn *pgx.Conn, table string, primaryKey string, startKey PrimaryKey, offset uint32, where string) (PrimaryKey, error) {
-	var whereClause string
-	if len(where) > 0 {
-		whereClause = "and " + where
+func getKeyAtOffset(conn *pgx.Conn, table string, primaryKeys []string, startKey PrimaryKeySet, offset uint32, where string) (PrimaryKeySet, error) {
+	var result PrimaryKeySet
+
+	if len(primaryKeys) != len(startKey) {
+		return result, errors.New("Key length mismatch")
 	}
+
+	var extraWhereClause string
+	if len(where) > 0 {
+		extraWhereClause = "and " + where
+	}
+
+	keyList := strings.Join(primaryKeys, ",")
+
+	var filtering []string
+	var queryParameters = []interface{}{offset}
+	for i, keyValue := range startKey {
+		// "2+i" since query parameters after "offset" start at 2
+		filtering = append(filtering, fmt.Sprintf("%s >= $%d", primaryKeys[i], 2+i))
+		queryParameters = append(queryParameters, keyValue.value)
+	}
+	whereClause := strings.Join(filtering, " and ")
+
+	var minSorting []string
+	var maxSorting []string
+	for _, key := range primaryKeys {
+		minSorting = append(minSorting, fmt.Sprintf("%s asc", key))
+		maxSorting = append(maxSorting, fmt.Sprintf("%s desc", key))
+	}
+	minOrderClause := strings.Join(minSorting, ",")
+	maxOrderClause := strings.Join(maxSorting, ",")
+
 	q := fmt.Sprintf(`--sql
 	select
 		%[2]s
@@ -97,24 +130,41 @@ func getKeyAtOffset(conn *pgx.Conn, table string, primaryKey string, startKey Pr
 		from
 			%[1]s
 		where
-			%[2]s >= $1
 			%[3]s
-		order by %[2]s
-		limit $2
+			%[4]s
+		order by %[5]s
+		limit $1
 	) ids
 	order by
-		%[2]s desc
+		%[6]s
 	limit 1
-	;`, table, primaryKey, whereClause)
+	;`, table, keyList, whereClause, extraWhereClause, minOrderClause, maxOrderClause)
 
 	ctx := context.Background()
-	row := conn.QueryRow(ctx, q, startKey.value, offset)
-	var key PrimaryKey
-	err := row.Scan(&key)
-	return key, err
+	rows, err := conn.Query(ctx, q, queryParameters...)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			return result, err
+		}
+
+		result = make(PrimaryKeySet, len(primaryKeys))
+		for i := range result {
+			result[i].value = values[i]
+		}
+	} else {
+		return result, errors.New("Unexpected empty resultset")
+	}
+
+	return result, nil
 }
 
-func (job *Job) updateChangedRange(table string, primaryKey string, startKey PrimaryKey, endKey PrimaryKey, where string) error {
+func (job *Job) updateChangedRange(table string, primaryKeys []string, startKey PrimaryKeySet, endKey PrimaryKeySet, where string) error {
 	ctx := context.Background()
 	tx, err := job.target.Begin(ctx)
 	if err != nil {
@@ -126,24 +176,25 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey Pri
 		}
 	}()
 
-	var whereClause string
+	var extraWhereClause string
 	if len(where) > 0 {
-		whereClause = "and " + where
+		extraWhereClause = "and " + where
 	}
 
-	q := fmt.Sprintf(`--sql
-	select
-		*
+	whereClause, queryParameters := whereClauseFromKeyRange(primaryKeys, startKey, endKey)
+
+	baseQuery := fmt.Sprintf(`
+	--sql
 	from
 		%[1]s
 	where
-		%[2]s >= $1
-		and
-		%[2]s <= $2
+		%[2]s
 		%[3]s
-	;`, table, primaryKey, whereClause)
+	;`, table, whereClause, extraWhereClause)
 
-	rows, err := job.source.Query(ctx, q, startKey.value, endKey.value)
+	q := "select * " + baseQuery
+
+	rows, err := job.source.Query(ctx, q, queryParameters...)
 	if err != nil {
 		return err
 	}
@@ -163,15 +214,9 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey Pri
 		columnNames = append(columnNames, string(column.Name))
 	}
 
-	d := fmt.Sprintf(`--sql 
-	delete from %[1]s
-	where
-		%[2]s >= $1
-	and
-		%[2]s <= $2
-	;`, table, primaryKey)
+	d := "delete " + baseQuery
 
-	_, err = tx.Exec(ctx, d, startKey.value, endKey.value)
+	_, err = tx.Exec(ctx, d, queryParameters...)
 	if err != nil {
 		return err
 	}
@@ -191,29 +236,32 @@ func (job *Job) updateChangedRange(table string, primaryKey string, startKey Pri
 	return nil
 }
 
-func getKeyHash(conn *pgx.Conn, table string, primaryKey string, startKey PrimaryKey, endKey PrimaryKey, where string) (string, error) {
-	var whereClause string
+func getKeyHash(conn *pgx.Conn, table string, primaryKeys []string, startKey PrimaryKeySet, endKey PrimaryKeySet, where string) (string, error) {
+	var extraWhereClause string
 	if len(where) > 0 {
-		whereClause = "and " + where
+		extraWhereClause = "and " + where
 	}
-	q := `--sql 
+
+	keyList := strings.Join(primaryKeys, ",")
+
+	whereClause, queryParameters := whereClauseFromKeyRange(primaryKeys, startKey, endKey)
+
+	q := fmt.Sprintf(`--sql 
 	select
 		coalesce(md5(array_agg(id)::varchar), '') as hash
 	from (
 		select
-			%[1]s as id
+			(%[1]s)::varchar as id
 		from
 			%[2]s
 		where
-			%[1]s >= $1
-			and
-			%[1]s < $2
 			%[3]s
+			%[4]s
 		order by
-			1
+			%[1]s
 	) as t
-	;`
-	row := conn.QueryRow(context.Background(), fmt.Sprintf(q, primaryKey, table, whereClause), startKey.value, endKey.value)
+	;`, keyList, table, whereClause, extraWhereClause)
+	row := conn.QueryRow(context.Background(), q, queryParameters...)
 	var hash string
 	err := row.Scan(&hash)
 	if err != nil {
@@ -222,22 +270,84 @@ func getKeyHash(conn *pgx.Conn, table string, primaryKey string, startKey Primar
 	return hash, nil
 }
 
-func getPrimaryKeyRange(conn *pgx.Conn, table string, primaryKey string, where string) (primaryKeyRange, error) {
+func getPrimaryKeyRange(conn *pgx.Conn, table string, primaryKeys []string, where string) (primaryKeyRange, error) {
 	var whereClause string
 	if len(where) > 0 {
 		whereClause = "where " + where
 	}
-	q := `--sql
-		select min(%[1]s), max(%[1]s), count(*)
-		from %[2]s
-		%[3]s
-	;`
-	row := conn.QueryRow(context.Background(), fmt.Sprintf(q, primaryKey, table, whereClause))
+
+	var minSorting []string
+
+	for _, key := range primaryKeys {
+		minSorting = append(minSorting, fmt.Sprintf("%s asc", key))
+	}
+
+	minOrderClause := strings.Join(minSorting, ",")
+	keyList := strings.Join(primaryKeys, ",")
 	var result primaryKeyRange
-	err := row.Scan(&result.min, &result.max, &result.count)
+
+	q := fmt.Sprintf(`--sql
+		select
+			%[2]s, (select count(*) from %[1]s) as cnt
+		from
+			%[1]s
+		%[3]s
+		order by
+		%[4]s
+		limit 1
+	;`, table, keyList, whereClause, minOrderClause)
+
+	rows, err := conn.Query(context.Background(), q)
 	if err != nil {
-		return result, fmt.Errorf("failed to load primary key range (%v@%v): %v", primaryKey, table, err)
+		return result, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return result, errors.New("Unexpected empty resultset")
+	}
+
+	values, err := rows.Values()
+	if err != nil {
+		return result, fmt.Errorf("failed to load primary key range (%v@%v): %v", primaryKeys, table, err)
+	}
+
+	result.min = make(PrimaryKeySet, len(primaryKeys))
+	for i := range primaryKeys {
+		result.min[i].value = values[i]
+	}
+	result.count, err = integerValue(values[len(primaryKeys)])
+	if err != nil {
+		return result, fmt.Errorf("failed to convert count to int: %w", err)
 	}
 
 	return result, nil
+}
+
+func integerValue(unknown interface{}) (result uint32, err error) {
+	str := fmt.Sprintf("%v", unknown)
+	_, err = fmt.Sscanf(str, "%d", &result)
+	return
+}
+
+func whereClauseFromKeyRange(primaryKeys []string, startKey, endKey PrimaryKeySet) (string, []interface{}) {
+	var startFiltering []string
+	var queryParameters []interface{}
+	for i, keyValue := range startKey {
+		startFiltering = append(startFiltering, fmt.Sprintf("%s >= $%d", primaryKeys[i], i+1))
+		queryParameters = append(queryParameters, keyValue.value)
+	}
+
+	var endFiltering []string
+
+	parameterOffset := 1 + len(queryParameters)
+	for i, keyValue := range endKey {
+		endFiltering = append(endFiltering, fmt.Sprintf("%s < $%d", primaryKeys[i], i+parameterOffset))
+		queryParameters = append(queryParameters, keyValue.value)
+	}
+	whereClause := strings.Join(startFiltering, " and ")
+	whereClause += " and "
+	whereClause += strings.Join(endFiltering, " and ")
+
+	return whereClause, queryParameters
 }

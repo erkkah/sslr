@@ -77,7 +77,7 @@ func (r *reportingSource) Next() bool {
 	hasNext := r.wrapped.Next()
 	if hasNext {
 		r.rowsRead++
-		if r.rowsRead%10000 == 0 {
+		if r.rowsRead%100000 == 0 {
 			logger.Info.Printf("Read %v rows", r.rowsRead)
 		}
 	} else {

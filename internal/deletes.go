@@ -330,6 +330,12 @@ func integerValue(unknown interface{}) (result uint32, err error) {
 	return
 }
 
+// whereClauseFromKeyRange creates a string with "where" filters, and corresponding list of query parameters
+// from a set of primary key names and their limit values.
+//
+// The returned filter represents the closed interval [startKey, endKey].
+// We use a closed interval and accept overlapping endpoints, since we cannot easily increment
+// multi-column string-valued keys.
 func whereClauseFromKeyRange(primaryKeys []string, startKey, endKey PrimaryKeySet) (string, []interface{}) {
 	var startFiltering []string
 	var queryParameters []interface{}
@@ -342,7 +348,7 @@ func whereClauseFromKeyRange(primaryKeys []string, startKey, endKey PrimaryKeySe
 
 	parameterOffset := 1 + len(queryParameters)
 	for i, keyValue := range endKey {
-		endFiltering = append(endFiltering, fmt.Sprintf("%s < $%d", primaryKeys[i], i+parameterOffset))
+		endFiltering = append(endFiltering, fmt.Sprintf("%s <= $%d", primaryKeys[i], i+parameterOffset))
 		queryParameters = append(queryParameters, keyValue.value)
 	}
 	whereClause := strings.Join(startFiltering, " and ")

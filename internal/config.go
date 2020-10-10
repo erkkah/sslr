@@ -14,7 +14,8 @@ type Config struct {
 	TargetConnection     string   `json:"target"`
 	SourceTables         []string `json:"tables"`
 	FilteredSourceTables map[string]struct {
-		Where string `json:"where"`
+		Where string   `json:"where"`
+		Uses  []string `json:"uses"`
 	} `json:"filteredTables"`
 	UpdateChunkSize      uint32  `json:"updateChunkSize"`
 	DeleteChunkSize      uint32  `json:"deleteChunkSize"`
@@ -46,15 +47,24 @@ func LoadConfig(fileName string) (Config, error) {
 	if err != nil {
 		return config, err
 	}
-	err = validateConfig(jsonData)
+	err = validateSource(jsonData)
 	if err != nil {
 		return config, err
 	}
 	err = json.Unmarshal(jsonData, &config)
-	return config, err
+	if err != nil {
+		return config, err
+	}
+
+	err = config.validateUses()
+	if err != nil {
+		return config, err
+	}
+
+	return config, nil
 }
 
-func validateConfig(jsonData []byte) error {
+func validateSource(jsonData []byte) error {
 	configType := reflect.TypeOf(Config{})
 	var parsed map[string]interface{}
 	err := json.Unmarshal(jsonData, &parsed)
@@ -81,6 +91,34 @@ func validateConfig(jsonData []byte) error {
 	for k := range parsed {
 		if !validField(k) {
 			return fmt.Errorf("Unknown setting %q", k)
+		}
+	}
+
+	return nil
+}
+
+func (cfg Config) validateUses() error {
+	hasTable := func(needle string) bool {
+		for _, table := range cfg.SourceTables {
+			if table == needle {
+				return true
+			}
+		}
+
+		for table := range cfg.FilteredSourceTables {
+			if table == needle {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	for _, settings := range cfg.FilteredSourceTables {
+		for _, used := range settings.Uses {
+			if !hasTable(used) {
+				return fmt.Errorf("unknown table %q in uses list", used)
+			}
 		}
 	}
 

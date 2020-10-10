@@ -58,16 +58,23 @@ func (pk *PrimaryKey) Value() (driver.Value, error) {
 // PrimaryKeySetSlice wraps a slice of PrimaryKeySet for easy conversion
 type PrimaryKeySetSlice []PrimaryKeySet
 
-// StringValues converts a slice of PrimaryKey slices to a slice of string slices.
-// Or - converts rows of multiple primary key values into their string-valued counterparts
-func (rows PrimaryKeySetSlice) StringValues() [][]string {
-	var result [][]string
-	for _, row := range rows {
-		var keys []string
-		for _, key := range row {
-			keys = append(keys, fmt.Sprintf("%v", key))
+// Transposed converts a slice of PrimaryKey slices to a slice of string slices.
+// Or - converts N rows of M primary key values into M columns of N single-valued key values.
+// The result is returned as a []interface{} for easy inclusion in queries.
+func (rows PrimaryKeySetSlice) Transposed() []interface{} {
+	var result []interface{}
+
+	for i, row := range rows {
+		if i == 0 {
+			result = make([]interface{}, len(row))
+			for j := range row {
+				result[j] = make([]interface{}, len(rows))
+			}
 		}
-		result = append(result, keys)
+		for j, key := range row {
+			column := result[j].([]interface{})
+			column[i] = key.value
+		}
 	}
 	return result
 }
@@ -210,6 +217,20 @@ func createTable(conn *pgx.Conn, table string, schema string) error {
 		return err
 	}
 	_, err = conn.Exec(context.Background(), schema)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func recreateTable(conn *pgx.Conn, table string, schema string) error {
+	_, err := conn.Exec(context.Background(), fmt.Sprintf("drop table %s", table))
+	if err != nil {
+		return fmt.Errorf("failed to drop table during re-creation: %w", err)
+	}
+
+	err = createTable(conn, table, schema)
 	if err != nil {
 		return err
 	}

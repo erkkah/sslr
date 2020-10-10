@@ -13,25 +13,37 @@ import (
 	"github.com/lib/pq"
 )
 
+// ValidationStatus is used to track current table validation status
+type ValidationStatus int
+
+const (
+	validationStatusUnknown ValidationStatus = iota
+	validationStatusValidating
+	validationStatusValid
+	validationStatusInvalid
+)
+
 // Job represents an active sync job
 type Job struct {
-	cfg         Config
-	primaryKeys map[string][]string
-	columns     map[string][]string
-	forceSync   map[string]bool
-	source      *pgx.Conn
-	target      *pgx.Conn
-	start       time.Time
-	updatedRows uint32
+	cfg              Config
+	primaryKeys      map[string][]string
+	columns          map[string][]string
+	forceSync        map[string]bool
+	validationStatus map[string]ValidationStatus
+	source           *pgx.Conn
+	target           *pgx.Conn
+	start            time.Time
+	updatedRows      uint32
 }
 
 // NewJob creates a new job from a config
 func NewJob(config Config) (*Job, error) {
 	job := Job{
-		cfg:         config,
-		primaryKeys: make(map[string][]string),
-		columns:     make(map[string][]string),
-		forceSync:   make(map[string]bool),
+		cfg:              config,
+		primaryKeys:      make(map[string][]string),
+		columns:          make(map[string][]string),
+		forceSync:        make(map[string]bool),
+		validationStatus: make(map[string]ValidationStatus),
 	}
 	return &job, nil
 }
@@ -84,6 +96,29 @@ func (job *Job) connect() error {
 var errSchemaMismatch = errors.New("schema mismatch")
 
 func (job *Job) validateTable(table string) error {
+	if job.validationStatus[table] == validationStatusValid {
+		return nil
+	}
+
+	if job.validationStatus[table] == validationStatusValidating {
+		return errors.New("filtered table dependency loop")
+	}
+
+	validationStatus := validationStatusInvalid
+	job.validationStatus[table] = validationStatusValidating
+	defer func() {
+		job.validationStatus[table] = validationStatus
+	}()
+
+	if settings, found := job.cfg.FilteredSourceTables[table]; found {
+		for _, used := range settings.Uses {
+			err := job.validateTable(used)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	schema, err := extractTableSchema(job.source, table)
 	if err != nil {
 		return err
@@ -100,7 +135,16 @@ func (job *Job) validateTable(table string) error {
 		}
 		if targetSchema != schema {
 			logger.Debug.Printf("Schemas differ:\nsource: %s\ntarget: %s", schema, targetSchema)
-			return errSchemaMismatch
+			if job.cfg.ResyncOnSchemaChange {
+				logger.Info.Printf("Schema for table %q has changed, re-creating and marking for re-sync", table)
+				job.forceSync[table] = true
+				err = recreateTable(job.target, table, schema)
+				if err != nil {
+					return err
+				}
+			} else {
+				return errSchemaMismatch
+			}
 		}
 	} else {
 		err = createTable(job.target, table, schema)
@@ -126,29 +170,42 @@ func (job *Job) validateTable(table string) error {
 		}
 	}
 
+	validationStatus = validationStatusValid
+
 	return nil
 }
 
 func (job *Job) validateTables() error {
+
 	for _, table := range job.cfg.SourceTables {
 		err := job.validateTable(table)
-		if err == errSchemaMismatch && job.cfg.ResyncOnSchemaChange {
-			logger.Info.Printf("Schema for table %q has changed, marking for re-synk", table)
-			job.forceSync[table] = true
-			continue
-		}
 		if err != nil {
 			return err
 		}
 	}
 
-	for table := range job.cfg.FilteredSourceTables {
-		err := job.validateTable(table)
-		if err == errSchemaMismatch && job.cfg.ResyncOnSchemaChange {
-			logger.Info.Printf("Schema for table %q has changed, marking for re-synk", table)
-			job.forceSync[table] = true
-			continue
+	for table, settings := range job.cfg.FilteredSourceTables {
+		state, err := job.getTableState(table)
+		if err != nil {
+			return err
 		}
+
+		if state.empty() {
+			state.whereClause = settings.Where
+			err = job.setTableState(table, state)
+			if err != nil {
+				return fmt.Errorf("failed to update table state: %w", err)
+			}
+		} else if settings.Where != "" && job.cfg.FilteredSourceTables[table].Where != state.whereClause {
+			if job.cfg.ResyncOnSchemaChange {
+				logger.Info.Printf("Where clause for table %q has changed, marking for re-sync")
+				job.forceSync[table] = true
+			} else {
+				return fmt.Errorf("filtered table %q where clause has changed, and 'resyncOnSchemaChange' is not set", table)
+			}
+		}
+
+		err = job.validateTable(table)
 		if err != nil {
 			return err
 		}
@@ -205,9 +262,7 @@ func (job *Job) updateTable(table string, where string) error {
 			if err != nil {
 				return err
 			}
-			err = job.setTableState(table, tableState{
-				lastSeenXmin: updateRange.endXmin,
-			})
+			err = job.setTableStateXmin(table, updateRange.endXmin)
 			if err != nil {
 				return err
 			}
@@ -227,7 +282,7 @@ func (job *Job) updateTable(table string, where string) error {
 		logger.Info.Printf("Syncing deletions for table %s", table)
 		err = job.syncDeletedRows(table, where)
 		if err != nil {
-			logger.Error.Printf("Failed to sync deletions for table %s: %v", table, err)
+			return fmt.Errorf("failed to sync deletions for table %s: %w", table, err)
 		}
 	}
 

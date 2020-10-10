@@ -1,10 +1,8 @@
-name: Build on push
+name: Build develop on push
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches: [ develop ]
 
 jobs:
 
@@ -13,7 +11,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
     steps:
 
     - name: Set up Go

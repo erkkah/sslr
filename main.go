@@ -44,7 +44,7 @@ func main() {
 	}()
 
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 
 	for {
 		select {

@@ -154,7 +154,7 @@ func (job *Job) updateTableRange(table string, primaryKeys []string, updRange up
 		}
 
 		if lastCompleteXmin != 0 {
-			err = job.setTableState(table, tableState{lastCompleteXmin})
+			err = job.setTableStateXmin(table, lastCompleteXmin)
 			if err != nil {
 				return err
 			}
@@ -219,14 +219,30 @@ func applyUpdates(target *pgx.Conn, table string, primaryKeys []string, columns 
 }
 
 func deleteRows(target pgx.Tx, table string, primaryKeys []string, keys PrimaryKeySetSlice) error {
-	keyList := strings.Join(primaryKeys, ", ")
+	if len(keys) == 0 {
+		return nil
+	}
 
+	keyList := strings.Join(primaryKeys, ", ")
+	keyValues := keys.Transposed()
+	var parameternames = make([]string, len(keyValues))
+	for i, column := range keyValues {
+		rows := column.([]interface{})
+		first := rows[0]
+		keyType := "int"
+		if _, ok := first.(string); ok {
+			keyType = "varchar"
+		}
+		parameternames[i] = fmt.Sprintf("$%d::%s[]", i+1, keyType)
+	}
 	d := fmt.Sprintf(`--sql
 	delete from %[1]s
-	where array[[%[2]s]] <@ $1
-	;`, table, keyList)
+	where (%[2]s) in (
+		select * from unnest(%[3]s)
+	)
+	;`, table, keyList, strings.Join(parameternames, ","))
 
-	tag, err := target.Exec(context.Background(), d, keys.StringValues())
+	tag, err := target.Exec(context.Background(), d, keyValues...)
 	if err != nil {
 		return err
 	}

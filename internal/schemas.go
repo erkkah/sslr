@@ -88,10 +88,10 @@ type primaryKeyRange struct {
 	count uint32
 }
 
-func extractTableSchema(conn *pgx.Conn, tablePath string) (string, error) {
+func extractTableSchema(ctx context.Context, conn *pgx.Conn, tablePath string) (string, error) {
 	namespace, table := splitTablePath(tablePath)
 
-	row := conn.QueryRow(context.Background(),
+	row := conn.QueryRow(ctx,
 		`--sql
     select
         'create table ' || relname || '(' ||
@@ -144,7 +144,7 @@ type tableIndex struct {
 	columns   []string
 }
 
-func extractTableIndices(conn *pgx.Conn, tablePath string) ([]tableIndex, error) {
+func extractTableIndices(ctx context.Context, conn *pgx.Conn, tablePath string) ([]tableIndex, error) {
 	q := `--sql
     select
         i.relname as "indexName",
@@ -174,7 +174,7 @@ func extractTableIndices(conn *pgx.Conn, tablePath string) ([]tableIndex, error)
 	var result []tableIndex
 
 	namespace, table := splitTablePath(tablePath)
-	rows, err := conn.Query(context.Background(), q, namespace, table)
+	rows, err := conn.Query(ctx, q, namespace, table)
 	if err != nil {
 		return result, err
 	}
@@ -192,8 +192,8 @@ func extractTableIndices(conn *pgx.Conn, tablePath string) ([]tableIndex, error)
 	return result, nil
 }
 
-func objectExists(conn *pgx.Conn, tablePath string) (bool, error) {
-	row := conn.QueryRow(context.Background(), `select to_regclass($1) is not null`, tablePath)
+func objectExists(ctx context.Context, conn *pgx.Conn, tablePath string) (bool, error) {
+	row := conn.QueryRow(ctx, `select to_regclass($1) is not null`, tablePath)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -210,13 +210,13 @@ func splitTablePath(path string) (string, string) {
 	return namespace, table
 }
 
-func createTable(conn *pgx.Conn, table string, schema string) error {
+func createTable(ctx context.Context, conn *pgx.Conn, table string, schema string) error {
 	namespace, _ := splitTablePath(table)
-	_, err := conn.Exec(context.Background(), fmt.Sprintf("create schema if not exists %s", namespace))
+	_, err := conn.Exec(ctx, fmt.Sprintf("create schema if not exists %s", namespace))
 	if err != nil {
 		return err
 	}
-	_, err = conn.Exec(context.Background(), schema)
+	_, err = conn.Exec(ctx, schema)
 	if err != nil {
 		return err
 	}
@@ -224,13 +224,13 @@ func createTable(conn *pgx.Conn, table string, schema string) error {
 	return nil
 }
 
-func recreateTable(conn *pgx.Conn, table string, schema string) error {
-	_, err := conn.Exec(context.Background(), fmt.Sprintf("drop table %s", table))
+func recreateTable(ctx context.Context, conn *pgx.Conn, table string, schema string) error {
+	_, err := conn.Exec(ctx, fmt.Sprintf("drop table %s", table))
 	if err != nil {
 		return fmt.Errorf("failed to drop table during re-creation: %w", err)
 	}
 
-	err = createTable(conn, table, schema)
+	err = createTable(ctx, conn, table, schema)
 	if err != nil {
 		return err
 	}
@@ -238,7 +238,7 @@ func recreateTable(conn *pgx.Conn, table string, schema string) error {
 	return nil
 }
 
-func applyIndices(conn *pgx.Conn, table string, indices []tableIndex) error {
+func applyIndices(ctx context.Context, conn *pgx.Conn, table string, indices []tableIndex) error {
 	for _, index := range indices {
 		columns := strings.Join(index.columns, ",")
 		var directive string
@@ -246,7 +246,7 @@ func applyIndices(conn *pgx.Conn, table string, indices []tableIndex) error {
 			directive = "unique"
 		}
 		q := fmt.Sprintf("create %s index concurrently if not exists %s on %s (%s)", directive, index.indexName, table, columns)
-		_, err := conn.Exec(context.Background(), q)
+		_, err := conn.Exec(ctx, q)
 		if err != nil {
 			return fmt.Errorf("failed to create index: %w", err)
 		}

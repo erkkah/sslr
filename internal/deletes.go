@@ -16,7 +16,7 @@ func (job *Job) syncDeletedRows(table string, where string) error {
 		return err
 	}
 
-	keyRange, err := getPrimaryKeyRange(job.source, table, primaryKeys, where)
+	keyRange, err := getPrimaryKeyRange(job.ctx, job.source, table, primaryKeys, where)
 	if err != nil {
 		return fmt.Errorf("failed to get primary key range: %w", err)
 	}
@@ -47,17 +47,17 @@ func (job *Job) syncDeletedRows(table string, where string) error {
 }
 
 func (job *Job) syncDeletedRowRange(table string, primaryKeys []string, startKey PrimaryKeySet, chunkSize uint32, where string) (endKey PrimaryKeySet, err error) {
-	endKey, err = getKeyAtOffset(job.source, table, primaryKeys, startKey, chunkSize, where)
+	endKey, err = getKeyAtOffset(job.ctx, job.source, table, primaryKeys, startKey, chunkSize, where)
 	if err != nil {
 		err = fmt.Errorf("failed to get key at offset: %w", err)
 		return
 	}
-	sourceHash, err := getKeyHash(job.source, table, primaryKeys, startKey, endKey, where)
+	sourceHash, err := getKeyHash(job.ctx, job.source, table, primaryKeys, startKey, endKey, where)
 	if err != nil {
 		err = fmt.Errorf("failed to get source key hash: %w", err)
 		return
 	}
-	targetHash, err := getKeyHash(job.target, table, primaryKeys, startKey, endKey, where)
+	targetHash, err := getKeyHash(job.ctx, job.target, table, primaryKeys, startKey, endKey, where)
 	if err != nil {
 		err = fmt.Errorf("failed to get target key hash: %w", err)
 		return
@@ -88,7 +88,7 @@ func (job *Job) syncDeletedRowRange(table string, primaryKeys []string, startKey
 	return endKey, nil
 }
 
-func getKeyAtOffset(conn *pgx.Conn, table string, primaryKeys []string, startKey PrimaryKeySet, offset uint32, where string) (PrimaryKeySet, error) {
+func getKeyAtOffset(ctx context.Context, conn *pgx.Conn, table string, primaryKeys []string, startKey PrimaryKeySet, offset uint32, where string) (PrimaryKeySet, error) {
 	var result PrimaryKeySet
 
 	if len(primaryKeys) != len(startKey) {
@@ -140,7 +140,6 @@ func getKeyAtOffset(conn *pgx.Conn, table string, primaryKeys []string, startKey
 	limit 1
 	;`, table, keyList, whereClause, extraWhereClause, minOrderClause, maxOrderClause)
 
-	ctx := context.Background()
 	rows, err := conn.Query(ctx, q, queryParameters...)
 	if err != nil {
 		return result, err
@@ -165,14 +164,13 @@ func getKeyAtOffset(conn *pgx.Conn, table string, primaryKeys []string, startKey
 }
 
 func (job *Job) updateChangedRange(table string, primaryKeys []string, startKey PrimaryKeySet, endKey PrimaryKeySet, where string) error {
-	ctx := context.Background()
-	tx, err := job.target.Begin(ctx)
+	tx, err := job.target.Begin(job.ctx)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if tx != nil {
-			tx.Rollback(ctx)
+			tx.Rollback(job.ctx)
 		}
 	}()
 
@@ -194,7 +192,7 @@ func (job *Job) updateChangedRange(table string, primaryKeys []string, startKey 
 
 	q := "select * " + baseQuery
 
-	rows, err := job.source.Query(ctx, q, queryParameters...)
+	rows, err := job.source.Query(job.ctx, q, queryParameters...)
 	if err != nil {
 		return err
 	}
@@ -216,18 +214,18 @@ func (job *Job) updateChangedRange(table string, primaryKeys []string, startKey 
 
 	d := "delete " + baseQuery
 
-	_, err = tx.Exec(ctx, d, queryParameters...)
+	_, err = tx.Exec(job.ctx, d, queryParameters...)
 	if err != nil {
 		return err
 	}
 
 	identifier := strings.Split(table, ".")
-	rowsRead, err := tx.CopyFrom(ctx, identifier, columnNames, rows)
+	rowsRead, err := tx.CopyFrom(job.ctx, identifier, columnNames, rows)
 	if err != nil {
 		return err
 	}
 
-	err = tx.Commit(ctx)
+	err = tx.Commit(job.ctx)
 	if err != nil {
 		return err
 	}
@@ -236,7 +234,7 @@ func (job *Job) updateChangedRange(table string, primaryKeys []string, startKey 
 	return nil
 }
 
-func getKeyHash(conn *pgx.Conn, table string, primaryKeys []string, startKey PrimaryKeySet, endKey PrimaryKeySet, where string) (string, error) {
+func getKeyHash(ctx context.Context, conn *pgx.Conn, table string, primaryKeys []string, startKey PrimaryKeySet, endKey PrimaryKeySet, where string) (string, error) {
 	var extraWhereClause string
 	if len(where) > 0 {
 		extraWhereClause = "and " + where
@@ -261,7 +259,7 @@ func getKeyHash(conn *pgx.Conn, table string, primaryKeys []string, startKey Pri
 			%[1]s
 	) as t
 	;`, keyList, table, whereClause, extraWhereClause)
-	row := conn.QueryRow(context.Background(), q, queryParameters...)
+	row := conn.QueryRow(ctx, q, queryParameters...)
 	var hash string
 	err := row.Scan(&hash)
 	if err != nil {
@@ -270,7 +268,7 @@ func getKeyHash(conn *pgx.Conn, table string, primaryKeys []string, startKey Pri
 	return hash, nil
 }
 
-func getPrimaryKeyRange(conn *pgx.Conn, table string, primaryKeys []string, where string) (primaryKeyRange, error) {
+func getPrimaryKeyRange(ctx context.Context, conn *pgx.Conn, table string, primaryKeys []string, where string) (primaryKeyRange, error) {
 	var whereClause string
 	if len(where) > 0 {
 		whereClause = "where " + where
@@ -297,7 +295,7 @@ func getPrimaryKeyRange(conn *pgx.Conn, table string, primaryKeys []string, wher
 		limit 1
 	;`, table, keyList, whereClause, minOrderClause)
 
-	rows, err := conn.Query(context.Background(), q)
+	rows, err := conn.Query(ctx, q)
 	if err != nil {
 		return result, err
 	}

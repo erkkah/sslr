@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/erkkah/letarette/pkg/logger"
 	sslr "github.com/erkkah/sslr/internal"
@@ -22,17 +25,35 @@ func main() {
 		os.Exit(1)
 	}
 
-	job, err := sslr.NewJob(config)
+	ctx, cancel := context.WithCancel(context.Background())
+	job, err := sslr.NewJob(ctx, config)
 	if err != nil {
 		logger.Error.Printf("Failed to create job: %v\n", err)
 		os.Exit(2)
 	}
 
-	err = job.Run()
-	if err != nil {
-		logger.Error.Printf("SSLR job failed: %v\n", err)
-		os.Exit(3)
+	done := make(chan (struct{}))
+
+	go func() {
+		err = job.Run()
+		if err != nil {
+			logger.Error.Printf("Job failed: %v\n", err)
+			os.Exit(3)
+		}
+		close(done)
+	}()
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT)
+
+	for {
+		select {
+		case s := <-signals:
+			logger.Info.Printf("Received signal %v\n", s)
+			cancel()
+		case <-done:
+			os.Exit(0)
+		}
 	}
 
-	os.Exit(0)
 }

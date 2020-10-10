@@ -1,7 +1,6 @@
 package sslr
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -10,14 +9,12 @@ import (
 )
 
 func (job *Job) copyFullTable(table string, where string) error {
-	ctx := context.Background()
-
 	var whereClause string
 	if len(where) > 0 {
 		whereClause = "where " + where
 	}
 	q := fmt.Sprintf("select * from %s %s", table, whereClause)
-	rows, err := job.source.Query(ctx, q)
+	rows, err := job.source.Query(job.ctx, q)
 	if err != nil {
 		return err
 	}
@@ -29,30 +26,30 @@ func (job *Job) copyFullTable(table string, where string) error {
 		columnNames = append(columnNames, string(column.Name))
 	}
 
-	tx, err := job.target.Begin(ctx)
+	tx, err := job.target.Begin(job.ctx)
 	if err != nil {
 		return err
 	}
 
 	defer func() {
 		if tx != nil {
-			tx.Rollback(ctx)
+			tx.Rollback(job.ctx)
 		}
 	}()
 
-	_, err = tx.Exec(ctx, fmt.Sprintf("delete from %s", table))
+	_, err = tx.Exec(job.ctx, fmt.Sprintf("delete from %s", table))
 	if err != nil {
 		return fmt.Errorf("failed to delete old data: %w", err)
 	}
 
 	logger.Info.Printf("Running streaming copy")
 	identifier := strings.Split(table, ".")
-	updatedRows, err := tx.CopyFrom(ctx, identifier, columnNames, newReportingSource(rows))
+	updatedRows, err := tx.CopyFrom(job.ctx, identifier, columnNames, newReportingSource(rows))
 	if err != nil {
 		return err
 	}
 
-	err = tx.Commit(ctx)
+	err = tx.Commit(job.ctx)
 	if err != nil {
 		return err
 	}

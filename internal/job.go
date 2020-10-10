@@ -25,6 +25,7 @@ const (
 
 // Job represents an active sync job
 type Job struct {
+	ctx              context.Context
 	cfg              Config
 	primaryKeys      map[string][]string
 	columns          map[string][]string
@@ -37,8 +38,9 @@ type Job struct {
 }
 
 // NewJob creates a new job from a config
-func NewJob(config Config) (*Job, error) {
+func NewJob(ctx context.Context, config Config) (*Job, error) {
 	job := Job{
+		ctx:              ctx,
 		cfg:              config,
 		primaryKeys:      make(map[string][]string),
 		columns:          make(map[string][]string),
@@ -82,11 +84,11 @@ func (job *Job) connect() error {
 	pq.EnableInfinityTs(time.Unix(0, 0), time.Unix(math.MaxInt32*100, 0))
 
 	var err error
-	job.source, err = pgx.Connect(context.Background(), job.cfg.SourceConnection)
+	job.source, err = pgx.Connect(job.ctx, job.cfg.SourceConnection)
 	if err != nil {
 		return err
 	}
-	job.target, err = pgx.Connect(context.Background(), job.cfg.TargetConnection)
+	job.target, err = pgx.Connect(job.ctx, job.cfg.TargetConnection)
 	if err != nil {
 		return err
 	}
@@ -119,17 +121,17 @@ func (job *Job) validateTable(table string) error {
 		}
 	}
 
-	schema, err := extractTableSchema(job.source, table)
+	schema, err := extractTableSchema(job.ctx, job.source, table)
 	if err != nil {
 		return err
 	}
 
-	targetExists, err := objectExists(job.target, table)
+	targetExists, err := objectExists(job.ctx, job.target, table)
 	if err != nil {
 		return err
 	}
 	if targetExists {
-		targetSchema, err := extractTableSchema(job.target, table)
+		targetSchema, err := extractTableSchema(job.ctx, job.target, table)
 		if err != nil {
 			return err
 		}
@@ -138,7 +140,7 @@ func (job *Job) validateTable(table string) error {
 			if job.cfg.ResyncOnSchemaChange {
 				logger.Info.Printf("Schema for table %q has changed, re-creating and marking for re-sync", table)
 				job.forceSync[table] = true
-				err = recreateTable(job.target, table, schema)
+				err = recreateTable(job.ctx, job.target, table, schema)
 				if err != nil {
 					return err
 				}
@@ -147,19 +149,19 @@ func (job *Job) validateTable(table string) error {
 			}
 		}
 	} else {
-		err = createTable(job.target, table, schema)
+		err = createTable(job.ctx, job.target, table, schema)
 
 		if err != nil {
 			return fmt.Errorf("failed to create target table: %w", err)
 		}
 	}
 
-	indices, err := extractTableIndices(job.source, table)
+	indices, err := extractTableIndices(job.ctx, job.source, table)
 	if err != nil {
 		return err
 	}
 
-	err = applyIndices(job.target, table, indices)
+	err = applyIndices(job.ctx, job.target, table, indices)
 	if err != nil {
 		return fmt.Errorf("failed to create indices: %w", err)
 	}

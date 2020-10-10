@@ -41,7 +41,7 @@ func (job *Job) getUpdateRange(table string, where string) (updateRange, error) 
 		whereClause = "where " + where
 	}
 	q := fmt.Sprintf("select count(*), max(xmin::text::bigint) from %s %s", table, whereClause)
-	row := job.source.QueryRow(context.Background(), q)
+	row := job.source.QueryRow(job.ctx, q)
 
 	var sourceLength uint64
 	err := row.Scan(&sourceLength, &resultRange.endXmin)
@@ -50,7 +50,7 @@ func (job *Job) getUpdateRange(table string, where string) (updateRange, error) 
 	}
 
 	if !resultRange.fullTable {
-		targetLength, err := getTableLength(job.target, table, where)
+		targetLength, err := getTableLength(job.ctx, job.target, table, where)
 		if err != nil {
 			return resultRange, err
 		}
@@ -103,7 +103,7 @@ func (job *Job) updateTableRange(table string, primaryKeys []string, updRange up
 
 		logger.Info.Printf("Reading from source")
 
-		rows, err := job.source.Query(context.Background(), q, xmin, offset, job.cfg.UpdateChunkSize)
+		rows, err := job.source.Query(job.ctx, q, xmin, offset, job.cfg.UpdateChunkSize)
 		if err != nil {
 			return fmt.Errorf("query execution failure: %w", err)
 		}
@@ -142,7 +142,7 @@ func (job *Job) updateTableRange(table string, primaryKeys []string, updRange up
 
 		if len(rowValues) > 0 {
 			logger.Info.Printf("Writing %d rows to target", len(rowValues))
-			err = applyUpdates(job.target, table, primaryKeys, columnNames, rowValues)
+			err = applyUpdates(job.ctx, job.target, table, primaryKeys, columnNames, rowValues)
 			if err != nil {
 				return fmt.Errorf("failed to apply updates: %w", err)
 			}
@@ -164,8 +164,7 @@ func (job *Job) updateTableRange(table string, primaryKeys []string, updRange up
 	return nil
 }
 
-func applyUpdates(target *pgx.Conn, table string, primaryKeys []string, columns []string, values [][]interface{}) error {
-	ctx := context.Background()
+func applyUpdates(ctx context.Context, target *pgx.Conn, table string, primaryKeys []string, columns []string, values [][]interface{}) error {
 	tx, err := target.Begin(ctx)
 	if err != nil {
 		return err
@@ -196,7 +195,7 @@ func applyUpdates(target *pgx.Conn, table string, primaryKeys []string, columns 
 		keys = append(keys, rowKeys)
 	}
 
-	err = deleteRows(tx, table, primaryKeys, keys)
+	err = deleteRows(ctx, tx, table, primaryKeys, keys)
 	if err != nil {
 		return err
 	}
@@ -218,7 +217,7 @@ func applyUpdates(target *pgx.Conn, table string, primaryKeys []string, columns 
 	return nil
 }
 
-func deleteRows(target pgx.Tx, table string, primaryKeys []string, keys PrimaryKeySetSlice) error {
+func deleteRows(ctx context.Context, target pgx.Tx, table string, primaryKeys []string, keys PrimaryKeySetSlice) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -242,7 +241,7 @@ func deleteRows(target pgx.Tx, table string, primaryKeys []string, keys PrimaryK
 	)
 	;`, table, keyList, strings.Join(parameternames, ","))
 
-	tag, err := target.Exec(context.Background(), d, keyValues...)
+	tag, err := target.Exec(ctx, d, keyValues...)
 	if err != nil {
 		return err
 	}
@@ -250,7 +249,7 @@ func deleteRows(target pgx.Tx, table string, primaryKeys []string, keys PrimaryK
 	return nil
 }
 
-func getTableLength(conn *pgx.Conn, table string, where string) (uint64, error) {
+func getTableLength(ctx context.Context, conn *pgx.Conn, table string, where string) (uint64, error) {
 	var whereClause string
 	if len(where) > 0 {
 		whereClause = "where " + where
@@ -264,7 +263,7 @@ func getTableLength(conn *pgx.Conn, table string, where string) (uint64, error) 
 	%[2]s
 	;`, table, whereClause)
 
-	row := conn.QueryRow(context.Background(), q)
+	row := conn.QueryRow(ctx, q)
 	var count uint64
 	err := row.Scan(&count)
 	if err != nil {

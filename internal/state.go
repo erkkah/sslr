@@ -1,7 +1,6 @@
 package sslr
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/jackc/pgx/v4"
@@ -26,7 +25,7 @@ func (job *Job) setupStateTable() error {
 	)
 	;`, job.cfg.StateTableName)
 
-	_, err := job.target.Exec(context.Background(), q)
+	_, err := job.target.Exec(job.ctx, q)
 	return err
 }
 
@@ -44,7 +43,7 @@ func (job *Job) getTableState(table string) (tableState, error) {
 	where table_name = $1
 	;`, job.cfg.StateTableName)
 
-	row := job.target.QueryRow(context.Background(), q, table)
+	row := job.target.QueryRow(job.ctx, q, table)
 	err = row.Scan(&state.lastSeenXmin, &state.whereClause)
 	if err == pgx.ErrNoRows {
 		return state, nil
@@ -68,7 +67,7 @@ func (job *Job) setTableState(table string, state tableState) error {
 	do update set last_seen_xmin = $2, where_clause = $3
 	;`, job.cfg.StateTableName)
 
-	_, err = job.target.Exec(context.Background(), q, table, state.lastSeenXmin, state.whereClause)
+	_, err = job.target.Exec(job.ctx, q, table, state.lastSeenXmin, state.whereClause)
 	if err != nil {
 		return fmt.Errorf("failed to set table state: %w", err)
 	}

@@ -63,7 +63,7 @@ func (job *Job) getUpdateRange(table string, where string) (updateRange, error) 
 	return resultRange, nil
 }
 
-func (job *Job) updateTableRange(table string, primaryKey string, updRange updateRange, where string) error {
+func (job *Job) updateTableRange(table string, primaryKeys []string, updRange updateRange, where string) error {
 	logger.Debug.Printf("Updating table %s from %v to %v", table, updRange.startXmin, updRange.endXmin)
 	throttle := newThrottle("updates", job.cfg.ThrottlePercentage)
 	xmin := updRange.startXmin
@@ -73,6 +73,14 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 	if len(where) > 0 {
 		whereClause = "and " + where
 	}
+
+	var keySorting []string
+
+	for _, key := range primaryKeys {
+		keySorting = append(keySorting, fmt.Sprintf("%s asc", key))
+	}
+
+	orderClause := strings.Join(keySorting, ", ")
 
 	for xmin <= updRange.endXmin {
 		throttle.start()
@@ -91,7 +99,7 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 			$2
 		limit
 			$3
-		;`, table, primaryKey, whereClause)
+		;`, table, orderClause, whereClause)
 
 		logger.Info.Printf("Reading from source")
 
@@ -133,8 +141,8 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 		throttle.end()
 
 		if len(rowValues) > 0 {
-			logger.Info.Printf("Writing to target")
-			err = applyUpdates(job.target, table, primaryKey, columnNames, rowValues)
+			logger.Info.Printf("Writing %d rows to target", len(rowValues))
+			err = applyUpdates(job.target, table, primaryKeys, columnNames, rowValues)
 			if err != nil {
 				return fmt.Errorf("failed to apply updates: %w", err)
 			}
@@ -156,7 +164,7 @@ func (job *Job) updateTableRange(table string, primaryKey string, updRange updat
 	return nil
 }
 
-func applyUpdates(target *pgx.Conn, table string, primaryKey string, columns []string, values [][]interface{}) error {
+func applyUpdates(target *pgx.Conn, table string, primaryKeys []string, columns []string, values [][]interface{}) error {
 	ctx := context.Background()
 	tx, err := target.Begin(ctx)
 	if err != nil {
@@ -168,20 +176,27 @@ func applyUpdates(target *pgx.Conn, table string, primaryKey string, columns []s
 		}
 	}()
 
-	primaryColumnIndex := 0
-	for i, col := range columns {
-		if col == primaryKey {
-			primaryColumnIndex = i
-			break
+	var primaryColumnIndices = make([]int, len(primaryKeys))
+
+	for i, primaryKey := range primaryKeys {
+		for j, col := range columns {
+			if col == primaryKey {
+				primaryColumnIndices[i] = j
+				break
+			}
 		}
 	}
 
-	var keys []PrimaryKey
-	for _, value := range values {
-		keys = append(keys, PrimaryKey{value[primaryColumnIndex]})
+	var keys PrimaryKeySetSlice
+	for _, row := range values {
+		var rowKeys PrimaryKeySet
+		for _, keyIndex := range primaryColumnIndices {
+			rowKeys = append(rowKeys, PrimaryKey{row[keyIndex]})
+		}
+		keys = append(keys, rowKeys)
 	}
 
-	err = deleteRows(tx, table, primaryKey, keys)
+	err = deleteRows(tx, table, primaryKeys, keys)
 	if err != nil {
 		return err
 	}
@@ -203,16 +218,20 @@ func applyUpdates(target *pgx.Conn, table string, primaryKey string, columns []s
 	return nil
 }
 
-func deleteRows(target pgx.Tx, table string, primaryKey string, keys PrimaryKeySlice) error {
+func deleteRows(target pgx.Tx, table string, primaryKeys []string, keys PrimaryKeySetSlice) error {
+	keyList := strings.Join(primaryKeys, ", ")
+
 	d := fmt.Sprintf(`--sql
 	delete from %[1]s
-	where %[2]s::varchar in (
-		select * from unnest($1::varchar[])
-	)
-	;`, table, primaryKey)
+	where array[[%[2]s]] <@ $1
+	;`, table, keyList)
 
-	_, err := target.Exec(context.Background(), d, keys.StringValues())
-	return err
+	tag, err := target.Exec(context.Background(), d, keys.StringValues())
+	if err != nil {
+		return err
+	}
+	logger.Debug.Printf("Deleted %d rows", tag.RowsAffected())
+	return nil
 }
 
 func getTableLength(conn *pgx.Conn, table string, where string) (uint64, error) {

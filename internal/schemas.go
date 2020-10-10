@@ -14,6 +14,24 @@ type PrimaryKey struct {
 	value interface{}
 }
 
+// PrimaryKeySet is a list of primary key values for a single row
+type PrimaryKeySet []PrimaryKey
+
+// Equals compares two keysets
+func (pks PrimaryKeySet) Equals(other PrimaryKeySet) bool {
+	if len(pks) != len(other) {
+		return false
+	}
+
+	for i := range pks {
+		if pks[i] != other[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
 // Scan implements Scanner interface
 func (pk *PrimaryKey) Scan(value interface{}) error {
 	switch value.(type) {
@@ -37,14 +55,19 @@ func (pk *PrimaryKey) Value() (driver.Value, error) {
 	}
 }
 
-// PrimaryKeySlice wraps a slice of PrimaryKey for easy conversion
-type PrimaryKeySlice []PrimaryKey
+// PrimaryKeySetSlice wraps a slice of PrimaryKeySet for easy conversion
+type PrimaryKeySetSlice []PrimaryKeySet
 
-// StringValues converts a slice of PrimaryKey to a slice of string
-func (keys PrimaryKeySlice) StringValues() []string {
-	var result []string
-	for _, key := range keys {
-		result = append(result, fmt.Sprintf("%v", key))
+// StringValues converts a slice of PrimaryKey slices to a slice of string slices.
+// Or - converts rows of multiple primary key values into their string-valued counterparts
+func (rows PrimaryKeySetSlice) StringValues() [][]string {
+	var result [][]string
+	for _, row := range rows {
+		var keys []string
+		for _, key := range row {
+			keys = append(keys, fmt.Sprintf("%v", key))
+		}
+		result = append(result, keys)
 	}
 	return result
 }
@@ -54,8 +77,7 @@ func (pk PrimaryKey) String() string {
 }
 
 type primaryKeyRange struct {
-	min   PrimaryKey
-	max   PrimaryKey
+	min   PrimaryKeySet
 	count uint32
 }
 

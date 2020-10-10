@@ -11,9 +11,13 @@
     "/* Everything below is optional ":"*/",
 
     "/* Filtered tables, with 'where' clause ":"*/",
+    "/* If the 'where' clause depends on other tables, they need to be specified in the 'uses' list ":"*/",
     "filteredTables": {
-        "people": {
-            "where": "name like 'bob%'"
+        "strings": {
+            "where": "exists (select count(*) from timestamps)",
+            "uses": [
+                "timestamps"
+            ]
         }
     },
 
@@ -24,6 +28,7 @@
     "deleteChunkSize": 50000,
 
     "/* Chunk size for when to stop divide and conquer while scanning for deleted rows ":"*/",
+    "/* This is also the chunk size used for applying changes due to deletions ":"*/",
     "minDeleteChunkSize": 250,
 
     "/* Max source database utilization as a percentage of total execution time ":"*/",

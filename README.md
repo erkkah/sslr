@@ -4,7 +4,7 @@
 
 # SSLR - Simple Stupid Logical Replication
 
-**A simple, stupid logical replication tool for PostgreSQL databases.**
+**A simple stupid logical replication tool for PostgreSQL databases.**
 
 With so many existing solutions for replicating PostgreSQL databases, why did I create SSLR?
 
@@ -100,9 +100,13 @@ To get more feedback while tweaking options, use the `LOG_LEVEL` environment var
     "/* Everything below is optional ":"*/",
 
     "/* Filtered tables, with 'where' clause ":"*/",
+    "/* If the 'where' clause depends on other tables, they need to be specified in the 'uses' list ":"*/",
     "filteredTables": {
-        "people": {
-            "where": "name like 'bob%'"
+        "strings": {
+            "where": "exists (select count(*) from timestamps)",
+            "uses": [
+                "timestamps"
+            ]
         }
     },
 
@@ -113,12 +117,13 @@ To get more feedback while tweaking options, use the `LOG_LEVEL` environment var
     "deleteChunkSize": 50000,
 
     "/* Chunk size for when to stop divide and conquer while scanning for deleted rows ":"*/",
+    "/* This is also the chunk size used for applying changes due to deletions ":"*/",
     "minDeleteChunkSize": 250,
 
     "/* Max source database utilization as a percentage of total execution time ":"*/",
     "throttlePercentage": 75,
 
-    "/* Full table copy will be performed if the target table has less than (fullCopyThreshold * source_rows) rows ":"*/",
+    "/* Full table copy will be performed when target table has less than (fullCopyThreshold * source_rows) rows ":"*/",
     "fullCopyThreshold": 0.5,
 
     "/* Sync added and updated rows ":"*/",
@@ -172,7 +177,6 @@ For each table:
 ## Known issues
 
 - Since replication is done table by table, there are moments of referential inconsistency in the target database
-- As the target is meant for reading only, no triggers, constraints, et.c. except for the primary key are copied to the target
-- Multi-column primary keys are not supported
+- As the target is meant for reading only, no triggers, constraints, et.c. except for primary keys are copied to the target
 - `xmin` wrapping is not handled
 - Full table copying is not throttled

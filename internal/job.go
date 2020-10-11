@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"time"
 
 	"github.com/erkkah/letarette/pkg/logger"
 	"github.com/jackc/pgx/v4"
-	"github.com/lib/pq"
 )
 
 // ValidationStatus is used to track current table validation status
@@ -81,8 +79,6 @@ func (job *Job) Run() error {
 }
 
 func (job *Job) connect() error {
-	pq.EnableInfinityTs(time.Unix(0, 0), time.Unix(math.MaxInt32*100, 0))
-
 	var err error
 	job.source, err = pgx.Connect(job.ctx, job.cfg.SourceConnection)
 	if err != nil {

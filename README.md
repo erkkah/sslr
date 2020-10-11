@@ -1,4 +1,5 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/erkkah/sslr)](https://goreportcard.com/report/github.com/erkkah/sslr)
+[![Scc Count Badge](https://sloc.xyz/github/erkkah/sslr?category=code)](https://github.com/boyter/scc/)
 [![Generic badge](https://img.shields.io/badge/Hack-Yep!-gold.svg)](https://shields.io/)
 
 
@@ -21,9 +22,21 @@ SSLR is a small tool that provides throttled, filtered replication using a regul
 
 ## Getting started
 
-Download the tool, and create a file called `sslr.json` containing your replication config.
+### 1. Download SSLR
 
-A minimal config looks like this:
+Get [pre-built binaries](https://github.com/erkkah/sslr/releases) for Linux, Windows or OSX.
+
+Or install using your local golang setup:
+
+```console
+$ go get -u https://github.com/erkkah/sslr.git
+```
+
+### 2. Create a config
+
+Create a JSON file called `sslr.json` containing your replication config.
+
+A minimal config looks something like this:
 
 ```yaml
 {
@@ -36,7 +49,12 @@ A minimal config looks like this:
 }
 ```
 
-Then just run the tool:
+> Use `-cfg` to specify configuration file.
+
+### 3. Run the tool
+
+Then just run the tool. It will create target tables as needed and do a full sync of
+all configured tables.
 
 ```console
 $ sslr
@@ -51,6 +69,8 @@ $ sslr
 [INFO] 2020/10/08 14:31:43 Done
 [INFO] 2020/10/08 14:31:43 0 row(s) updated in 160.154866ms
 ```
+
+> If run with `-c`, the tool will run continuously instead of running just one pass.
 
 ## Replication options
 
@@ -177,6 +197,7 @@ For each table:
 ## Known issues
 
 - Since replication is done table by table, there are moments of referential inconsistency in the target database
+    - If you need consistent, valid data at all times, use real replication
 - As the target is meant for reading only, no triggers, constraints, et.c. except for primary keys are copied to the target
 - `xmin` wrapping is not handled
 - Full table copying is not throttled

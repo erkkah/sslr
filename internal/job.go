@@ -194,9 +194,9 @@ func (job *Job) validateTables() error {
 			if err != nil {
 				return fmt.Errorf("failed to update table state: %w", err)
 			}
-		} else if settings.Where != "" && job.cfg.FilteredSourceTables[table].Where != state.whereClause {
+		} else if settings.Where != state.whereClause {
 			if job.cfg.ResyncOnSchemaChange {
-				logger.Info.Printf("Where clause for table %q has changed, marking for re-sync")
+				logger.Info.Printf("Where clause for table %q has changed, marking for re-sync", table)
 				job.forceSync[table] = true
 			} else {
 				return fmt.Errorf("filtered table %q where clause has changed, and 'resyncOnSchemaChange' is not set", table)
@@ -234,6 +234,10 @@ func (job *Job) updateTables() error {
 		if err != nil {
 			return err
 		}
+		err = job.setTableWhereState(table, filter.Where)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -260,7 +264,7 @@ func (job *Job) updateTable(table string, where string) error {
 			if err != nil {
 				return err
 			}
-			err = job.setTableStateXmin(table, updateRange.endXmin)
+			err = job.setTableXminState(table, updateRange.endXmin)
 			if err != nil {
 				return err
 			}

@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // Config is the main configuration for SSLR
@@ -14,18 +15,20 @@ type Config struct {
 	TargetConnection     string   `json:"target"`
 	SourceTables         []string `json:"tables"`
 	FilteredSourceTables map[string]struct {
-		Where string   `json:"where"`
-		Uses  []string `json:"uses"`
+		Where  string   `json:"where"`
+		Wheres []string `json:"wheres"`
+		Uses   []string `json:"uses"`
 	} `json:"filteredTables"`
-	UpdateChunkSize      uint32  `json:"updateChunkSize"`
-	DeleteChunkSize      uint32  `json:"deleteChunkSize"`
-	MinDeleteChunkSize   uint32  `json:"minDeleteChunkSize"`
-	ThrottlePercentage   float64 `json:"throttlePercentage"`
-	StateTableName       string  `json:"stateTable"`
-	SyncUpdates          bool    `json:"syncUpdates"`
-	SyncDeletes          bool    `json:"syncDeletes"`
-	ResyncOnSchemaChange bool    `json:"resyncOnSchemaChange"`
-	FullCopyThreshold    float64 `json:"fullCopyThreshold"`
+	UpdateChunkSize      uint32        `json:"updateChunkSize"`
+	DeleteChunkSize      uint32        `json:"deleteChunkSize"`
+	MinDeleteChunkSize   uint32        `json:"minDeleteChunkSize"`
+	ThrottlePercentage   float64       `json:"throttlePercentage"`
+	StateTableName       string        `json:"stateTable"`
+	SyncUpdates          bool          `json:"syncUpdates"`
+	SyncDeletes          bool          `json:"syncDeletes"`
+	ResyncOnSchemaChange bool          `json:"resyncOnSchemaChange"`
+	FullCopyThreshold    float64       `json:"fullCopyThreshold"`
+	WaitBetweenJobs      time.Duration `json:"waitBetweenJobs"`
 }
 
 // LoadConfig reads a JSON - formatted config file into a Config.
@@ -42,6 +45,7 @@ func LoadConfig(fileName string) (Config, error) {
 		SyncDeletes:          true,
 		ResyncOnSchemaChange: false,
 		FullCopyThreshold:    0.5,
+		WaitBetweenJobs:      time.Second * 5,
 	}
 	jsonData, err := ioutil.ReadFile(fileName)
 	if err != nil {
@@ -65,21 +69,22 @@ func LoadConfig(fileName string) (Config, error) {
 }
 
 func validateSource(jsonData []byte) error {
-	configType := reflect.TypeOf(Config{})
+
 	var parsed map[string]interface{}
 	err := json.Unmarshal(jsonData, &parsed)
 	if err != nil {
 		return err
 	}
 
-	numFields := configType.NumField()
-	validField := func(field string) bool {
+	validField := func(field string, validType reflect.Type) bool {
+		numFields := validType.NumField()
+
 		// Comment hack
 		if strings.HasPrefix(field, "/*") {
 			return true
 		}
 		for i := 0; i < numFields; i++ {
-			tag := configType.Field(i).Tag
+			tag := validType.Field(i).Tag
 			value, ok := tag.Lookup("json")
 			if ok && value == field {
 				return true
@@ -88,9 +93,22 @@ func validateSource(jsonData []byte) error {
 		return false
 	}
 
+	template := Config{}
 	for k := range parsed {
-		if !validField(k) {
+		if !validField(k, reflect.TypeOf(template)) {
 			return fmt.Errorf("Unknown setting %q", k)
+		}
+	}
+
+	if filtered, ok := parsed["filteredTables"]; ok {
+		for _, v := range filtered.(map[string]interface{}) {
+			entry := v.(map[string]interface{})
+			filteredType := reflect.TypeOf(template.FilteredSourceTables)
+			for k := range entry {
+				if !validField(k, filteredType.Elem()) {
+					return fmt.Errorf("Unknown filtered table setting %q", k)
+				}
+			}
 		}
 	}
 
@@ -114,11 +132,18 @@ func (cfg Config) validateUses() error {
 		return false
 	}
 
-	for _, settings := range cfg.FilteredSourceTables {
+	for table, settings := range cfg.FilteredSourceTables {
 		for _, used := range settings.Uses {
 			if !hasTable(used) {
 				return fmt.Errorf("unknown table %q in uses list", used)
 			}
+		}
+		if len(settings.Wheres) > 0 {
+			if len(settings.Where) > 0 {
+				return fmt.Errorf("cannot set both 'where' and 'wheres' for table %q", table)
+			}
+			settings.Where = strings.Join(settings.Wheres, " ")
+			cfg.FilteredSourceTables[table] = settings
 		}
 	}
 

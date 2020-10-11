@@ -8,10 +8,7 @@ jobs:
 
   build:
     name: Build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
+    runs-on: ubuntu-latest
     steps:
 
     - name: Set up Go
@@ -23,6 +20,11 @@ jobs:
     - name: Check out code
       uses: actions/checkout@v2
 
-    - name: Build
-      run: go build -v .
+    - name: Build for linux
+      run: mkdir linux && GOOS=linux GOARCH=amd64 go build -v -o linux/sslr .
+
+    - name: Build for macos
+      run: mkdir macos && GOOS=darwin GOARCH=amd64 go build -v -o macos/sslr .
       
+    - name: Build for windows
+      run: mkdir windows && GOOS=windows GOARCH=amd64 go build -v -o windows/sslr.exe .

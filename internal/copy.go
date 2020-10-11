@@ -74,7 +74,20 @@ func (r *reportingSource) Next() bool {
 	hasNext := r.wrapped.Next()
 	if hasNext {
 		r.rowsRead++
-		if r.rowsRead%100000 == 0 {
+
+		var reportInterval uint32
+		switch {
+		case r.rowsRead > 1000000:
+			reportInterval = 500000
+			break
+		case r.rowsRead > 100000:
+			reportInterval = 100000
+			break
+		default:
+			reportInterval = 10000
+		}
+
+		if r.rowsRead%reportInterval == 0 {
 			logger.Info.Printf("Read %v rows", r.rowsRead)
 		}
 	} else {

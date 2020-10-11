@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/erkkah/letarette/pkg/logger"
 	sslr "github.com/erkkah/sslr/internal"
@@ -13,10 +14,12 @@ import (
 
 var args struct {
 	configFile string
+	continuous bool
 }
 
 func main() {
 	flag.StringVar(&args.configFile, "cfg", "sslr.json", "SSLR config file")
+	flag.BoolVar(&args.continuous, "c", false, "Run continuously")
 	flag.Parse()
 
 	config, err := sslr.LoadConfig(args.configFile)
@@ -32,28 +35,48 @@ func main() {
 		os.Exit(2)
 	}
 
-	done := make(chan (struct{}))
+	done := make(chan struct{})
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	var jobError error
 
 	go func() {
-		err = job.Run()
-		if err != nil {
-			logger.Error.Printf("Job failed: %v\n", err)
-			os.Exit(3)
+	runLoop:
+		for {
+			jobError = job.Run()
+			if jobError != nil {
+				break runLoop
+			}
+			if !args.continuous {
+				break runLoop
+			}
+			select {
+			case <-time.After(config.WaitBetweenJobs):
+				break
+			case <-ctx.Done():
+				break runLoop
+			}
 		}
+		cancel()
 		close(done)
 	}()
 
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	interrupted := false
 
-	for {
-		select {
-		case s := <-signals:
-			logger.Info.Printf("Received signal %v\n", s)
-			cancel()
-		case <-done:
-			os.Exit(0)
-		}
+	select {
+	case s := <-signals:
+		logger.Info.Printf("Received signal %v\n", s)
+		interrupted = true
+		break
+	case <-ctx.Done():
+		break
 	}
 
+	if jobError != nil && !interrupted {
+		logger.Error.Printf("Job failed: %v\n", jobError)
+		os.Exit(3)
+	}
+
+	cancel()
+	<-done
 }

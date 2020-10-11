@@ -2,6 +2,7 @@ package sslr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -115,6 +116,9 @@ func (job *Job) updateTableRange(table string, primaryKeys []string, updRange up
 
 		var columnNames []string
 		columns := rows.FieldDescriptions()
+		if len(columns) < 2 {
+			return errors.New("unexpected number of columns")
+		}
 		for _, column := range columns[1:] {
 			columnNames = append(columnNames, string(column.Name))
 		}
@@ -154,7 +158,7 @@ func (job *Job) updateTableRange(table string, primaryKeys []string, updRange up
 		}
 
 		if lastCompleteXmin != 0 {
-			err = job.setTableStateXmin(table, lastCompleteXmin)
+			err = job.setTableXminState(table, lastCompleteXmin)
 			if err != nil {
 				return err
 			}

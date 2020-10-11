@@ -74,13 +74,27 @@ func (job *Job) setTableState(table string, state tableState) error {
 	return nil
 }
 
-func (job *Job) setTableStateXmin(table string, xmin uint64) error {
+func (job *Job) setTableXminState(table string, xmin uint64) error {
 	state, err := job.getTableState(table)
 	if err != nil {
 		return err
 	}
 
 	state.lastSeenXmin = xmin
+	err = job.setTableState(table, state)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (job *Job) setTableWhereState(table string, where string) error {
+	state, err := job.getTableState(table)
+	if err != nil {
+		return err
+	}
+
+	state.whereClause = where
 	err = job.setTableState(table, state)
 	if err != nil {
 		return err

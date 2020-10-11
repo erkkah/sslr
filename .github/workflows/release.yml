@@ -6,42 +6,9 @@ on:
       - 'v*'
 
 jobs:
-
-  build:
-    name: Build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-        include:
-          - os: windows-latest
-            extension: ".exe"
-    steps:
-
-    - name: Set up Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: ^1.14
-      id: go
-
-    - name: Check out code
-      uses: actions/checkout@v2
-
-    - name: Build
-      run: go build -v .
-
-    - name: Pack binaries
-      run: tar czf binaries.tgz ${{ format('sslr{0}', matrix.extension) }}
-
-    - name: Save artifacts
-      uses: actions/upload-artifact@v1
-      with:
-        name: ${{ format('sslr-{0}', matrix.os) }}
-        path: binaries.tgz
   
   release:
-    name: Release
-    needs: build
+    name: Build and release
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -53,26 +20,26 @@ jobs:
       - name: Set ARCHIVE
         run: echo ::set-env name=ARCHIVE::sslr-${TAG}.tgz
 
-      - uses: actions/download-artifact@v1.0.0
+      - name: Set up Go
+        uses: actions/setup-go@v2
         with:
-          name: sslr-macos-latest
-          path: macos
+          go-version: ^1.14
+        id: go
 
-      - uses: actions/download-artifact@v1.0.0
-        with:
-          name: sslr-ubuntu-latest
-          path: linux
+      - name: Check out code
+        uses: actions/checkout@v2
 
-      - uses: actions/download-artifact@v1.0.0
-        with:
-          name: sslr-windows-latest
-          path: windows
+      - name: Build for linux
+        run: mkdir linux && GOOS=linux GOARCH=amd64 go build -v -o linux/sslr .
 
-      - name: Unpack binaries
-        run: for os in linux macos windows; do (cd $os && tar xzf binaries.tgz && rm binaries.tgz); done
+      - name: Build for macos
+        run: mkdir macos && GOOS=darwin GOARCH=amd64 go build -v -o macos/sslr .
+        
+      - name: Build for windows
+        run: mkdir windows && GOOS=windows GOARCH=amd64 go build -v -o windows/sslr.exe .
 
       - name: Pack release
-        id: pack-release
+        id: pack_release
         run: tar czf $ARCHIVE linux macos windows
 
       - name: Create release

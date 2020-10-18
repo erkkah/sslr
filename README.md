@@ -29,7 +29,7 @@ Get [pre-built binaries](https://github.com/erkkah/sslr/releases) for Linux, Win
 Or install using your local golang setup:
 
 ```console
-$ go get -u https://github.com/erkkah/sslr.git
+$ go get -u github.com/erkkah/sslr
 ```
 
 ### 2. Create a config

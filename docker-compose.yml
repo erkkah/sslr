@@ -1,7 +1,7 @@
 version: '3'
 services:
   mydb:
-    image: postgres
+    image: postgres:12
     volumes:
       - sslr-db:/var/lib/postgresql/data
       - ./docker-init.sql:/docker-entrypoint-initdb.d/init.sql

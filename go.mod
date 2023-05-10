@@ -1,11 +1,20 @@
 module github.com/erkkah/sslr
 
-go 1.14
+go 1.19
 
 require (
-	github.com/erkkah/letarette v0.1.1
-	github.com/jackc/pgx/v4 v4.9.0
-	github.com/lib/pq v1.8.0 // indirect
+	github.com/erkkah/letarette v0.2.2
+	github.com/jackc/pgx/v4 v4.18.1
 )
 
-replace github.com/jackc/pgtype => github.com/erkkah/pgtype v1.5.1-0.20201008073842-d166e5f64f18
+require (
+	github.com/jackc/chunkreader/v2 v2.0.1 // indirect
+	github.com/jackc/pgconn v1.14.0 // indirect
+	github.com/jackc/pgio v1.0.0 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgproto3/v2 v2.3.2 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a // indirect
+	github.com/jackc/pgtype v1.14.0 // indirect
+	golang.org/x/crypto v0.9.0 // indirect
+	golang.org/x/text v0.9.0 // indirect
+)
